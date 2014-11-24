@@ -393,7 +393,7 @@ EXAMPLES:
                         args['verb'] = self.method_aliases[args['verb']]
                 elif args['verb'] in self.http_methods and args['api'] is None:
                     # collect the API -- unless this is a internal command
-                    args['api'] = util.pretty_path(self.parse_path(part))
+                    args['api'] = util.pretty_path(self.parse_path(part), False, False)
                 else:
                     # anything else is a parameter
                     if args['verb'] in self.http_methods:
@@ -482,14 +482,6 @@ EXAMPLES:
         )
         return True
 
-    def _get_uri(self, api):
-        # absolute path?
-        if api.startswith('/'):
-            return util.pretty_path(api)
-        else:
-            # otherwise, parse against the current dir for the actual path
-            return util.pretty_path(self.parse_path(api))
-
     def _print_response(self, success, response, **args):
         if success:
             if response is not None:
@@ -573,8 +565,9 @@ EXAMPLES:
         if not len(path) or path == '-':
             return self._env['last_cwd']
         # make sure the path is formatted pretty
-        path = util.pretty_path(path)
+        path = util.pretty_path(path, False, False)
         # parse the dir path for relative portions
+        trailing = path.endswith('/')
         if path.startswith('/'):
             cur_dirs = ['/']
         else:
@@ -592,7 +585,10 @@ EXAMPLES:
             else:
                 cur_dirs.append(dir)
         # always end up with an absolute path
-        return util.pretty_path('/'.join(cur_dirs) + '/', True)
+        final_path = util.pretty_path('/'.join(cur_dirs), True, False)
+        if trailing:
+            final_path = final_path + '/'
+        return final_path
 
     def run_cmd(self, cmd, params=[]):
         if cmd == 'set':
@@ -618,7 +614,7 @@ EXAMPLES:
             path = ''
             if len(params):
                 path = params[0]
-            self.env('cwd', self.parse_path(path))
+            self.env('cwd', self.parse_path(path, False, False))
         elif cmd == 'config':
             dbg.pp(self.args)
             sys.stdout.write('\n')

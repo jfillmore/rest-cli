@@ -27,8 +27,9 @@ def pyv(version):
     return True
 
 
-def pretty_path(path, absolute=False):
-    path = path.rstrip('/')
+def pretty_path(path, absolute=False, no_trailing=True):
+    if no_trailing:
+        path = path.rstrip('/')
     if absolute:
         path = '/' + path
     regex = re.compile(r'/+')

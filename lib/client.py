@@ -241,7 +241,7 @@ class RESTClient:
         if not self.get_header(headers, 'Content-Type') and method != 'GET':
             headers['Content-Type'] = 'application/json'
         headers['Accept'] = 'application/json'
-        path = util.pretty_path('/'.join(('', self.url['path'], api)), True)
+        path = util.pretty_path('/'.join(('', self.url['path'], api)), True, False)
         url = '%s://%s%s' % (
             self.url['scheme'], self.url['hostname'], path
         )
@@ -262,7 +262,7 @@ class RESTClient:
             if self.get_header(headers, 'Content-Type', 'application/json'):
                 data = self.encode(params)
             else:
-                data = params
+                data = urllib.urlencode(params)
         # fire away
         if verbose:
             sys.stderr.write(
@@ -290,7 +290,6 @@ class RESTClient:
                 if http.cookies:
                     [http.putheader('Cookie', value) for value in http.cookies]
                 # write the body
-                #header_names = headers.fromkeys([k.lower() for k in headers])
                 if data:
                     body_len = len(data)
                     if body_len:
@@ -310,13 +309,10 @@ class RESTClient:
             raise Exception('HTTP request failed and could not be retried: %s' % last_error)
         # see if we get a cookie back
         response_headers = str(response.msg).split('\n')
+        # note that we ignore the path
         cookies = [c.split(': ')[1].split('; ')[0]
                    for c in response_headers if c.startswith('Set-Cookie: ')]
         if cookies:
-            # note that we ignore the path
-            if verbose:
-                for cookie in cookies:
-                    sys.stderr.write('# Response Cookie: %s\n' % (cookie))
             http.cookies = cookies
         if verbose:
             sys.stderr.write(
