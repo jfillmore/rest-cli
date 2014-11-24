@@ -5,22 +5,6 @@
 #   * '//foo' floating extraction
 #   * filter (or include) results based on values (e.g. "-f 'foo/id >= 3'")
 #   * verbose debugging to troubleshoot filtering/extraction
-#   * fix funny error messages:
-#        [il-chi-migration /var/www/maam/scripts]# php '/var/www/maam/scripts/post_migrate.php' --user 'jonny' --pass '' -i 660673 -m | json -x \*/dump/chi_plans
-#        nothing to repeat
-#        [il-chi-migration /var/www/maam/scripts]# php '/var/www/maam/scripts/post_migrate.php' --user 'jonny' --pass '' -i 660673 -m | json | less
-#        [il-chi-migration /var/www/maam/scripts]# php '/var/www/maam/scripts/post_migrate.php' --user 'jonny' --pass '' -i 660673 -m | json -x '660673/dump/chi_plans/.*price' -x '660673/dump/services/uber/cost'
-#        invalid literal for int() with base 10: '.*price'
-#        [il-chi-migration /var/www/maam/scripts]# php '/var/www/maam/scripts/post_migrate.php' --user 'jonny' --pass '' -i 660673 -m | json -x '660673/dump/chi_plans/*/.*price' -x '660673/dump/services/uber/cost'
-#        invalid literal for int() with base 10: 'cost'
-#        [il-chi-migration /var/www/maam/scripts]# php '/var/www/maam/scripts/post_migrate.php' --user 'jonny' --pass '' -i 660673 -m | json -x '660673/dump/chi_plans/*/.*price' -x '660673/dump/services/uber/*/cost'
-#        null
-#        null
-#        83.40
-
-
-# DEBUG
-#import pdb
 
 import sys
 import re
