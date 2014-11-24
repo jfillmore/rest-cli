@@ -20,7 +20,6 @@ import hashlib
 import socket
 import time
 
-from error import Exception
 import util
 
 

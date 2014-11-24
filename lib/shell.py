@@ -19,7 +19,6 @@ except:
     json = simplejson
 
 
-from .error import Exception
 import util
 import dbg
 import client
