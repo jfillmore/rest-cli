@@ -1,0 +1,14 @@
+#!/usr/bin/env python
+
+# rest-cli - python REST client
+# https://github.com/jfillmore/rest-cli
+#
+# Copyright, Jonathon Fillmore
+# Licensed under the MIT license. See LICENSE file.
+# http://www.opensource.org/licenses/mit-license.php
+
+import sys
+from lib.shell import Shell
+
+shell = Shell(sys.argv[1:])
+sys.exit(shell.last_rv)
