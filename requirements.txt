@@ -1,1 +1,1 @@
-oauth2
+restkit==4.2.2

@@ -4,8 +4,7 @@
 """Client for talking to a RESTful API server."""
 
 import urllib
-from urlparse import urlparse
-import httplib
+import urlparse
 try:
     import json
 except:
@@ -20,7 +19,23 @@ import hashlib
 import socket
 import time
 
+from restkit import Resource, OAuthFilter
+import restkit.oauth2 as oauth
+from restkit.errors import (
+    RequestError,
+    RequestFailed,
+    ResourceNotFound,
+    Unauthorized
+)
+
 import util
+
+
+class APIException(Exception):
+
+    def __init__(self, error, response):
+        self.response = response
+        super(APIException, self).__init__(error)
 
 
 class RESTClient:
@@ -28,15 +43,11 @@ class RESTClient:
     """Client for talking to a RESTful server."""
 
     def __init__(self, url='localhost'):
-        self.http = None
+        # the base URL information for construction API requests
         self.url = None
-        self.use_https = False
+        self.cookies = []  # session cookie cache
         # if set, an oauth authentication header will be included in each request
         self.oauth = None
-
-        # tempfile.NamedTemporaryFile()
-        # setup cookie jar
-        self.cookie_file = os.path.expanduser('~/.rest-cli_cookies')
         self.set_url(url)
         # TODO: python 2.7 supports an order tuple object we can use to
         # preserve order :)
@@ -75,7 +86,7 @@ class RESTClient:
             hostname = 'localhost'
         parts['hostname'] = hostname.lower()
         # let urlparse do the rest of the work on the path
-        parsed = urlparse('http://localhost/' + url)
+        parsed = urlparse.urlparse('http://localhost/' + url)
         parts['path'] = parsed.path
         parts['params'] = parsed.params
         parts['query'] = parsed.query
@@ -92,20 +103,13 @@ class RESTClient:
         self.url = url
         if url['scheme'] != 'http' and url['scheme'] != 'https':
             raise Exception('Only HTTP and HTTPS are supported protocols.')
-        self.set_https(url['scheme'] == 'https')
         if url['port']:
             self.set_port(url['port'])
         else:
-            if self.use_https:
+            if url['scheme'] == 'https':
                 self.set_port(443)
             else:
                 self.set_port(80)
-        http_args = self.url['hostname'], self.url['port']
-        if self.use_https:
-            self.http = httplib.HTTPSConnection(*http_args)
-        else:
-            self.http = httplib.HTTPConnection(*http_args)
-        self.http.cookies = False
 
     def load_oauth(self, creds):
         keys = [
@@ -120,12 +124,6 @@ class RESTClient:
                     raise Exception("Missing value for OAuth key '%s'." %
                                     (item))
             self.oauth = creds
-
-    def set_https(self, secure=True):
-        if secure:
-            self.use_https = True
-        else:
-            self.use_https = False
 
     def set_port(self, port):
         port = int(port)
@@ -148,6 +146,17 @@ class RESTClient:
 
     def delete(self, api, params, **opts):
         return self.request('DELETE', api, params, **opts)
+
+    def build_query_obj(self, query):
+        obj = urlparse.parse_qs(query)
+        # all objects are lists by default, but it's probably more conventional to flatten single-item arrays
+        new_obj = {}
+        for key in obj:
+            if len(obj[key]) == 1:
+                new_obj[key] = obj[key][0]
+            else:
+                new_obj[key] = obj[key]
+        return new_obj
 
     def build_query(self, params, topkey=''):
         '''Mimics the behaviour of http_build_query PHP function'''
@@ -204,11 +213,15 @@ class RESTClient:
             oauth2.SignatureMethod_HMAC_SHA1(), consumer, token)
         return request.to_header()['Authorization']
 
-    def merge_query(self, url, query):
-        index = url.find('?')
-        if index >= 0:
+    def merge_query(self, query1, query2=None):
+        if not query2:
+            return query1
+        return '&'.join([query1, query2])
+
+    def merge_url_query(self, url, query):
+        if url.find('?') >= 0:
             url, existing_query = url.split('?', 1)
-            query = '&'.join((existing_query, query))
+            query = self.merge_query(existing_query, query)
         return '?'.join((url, query)).rstrip('?')
 
     def get_header(self, headers, header, value=None):
@@ -220,121 +233,144 @@ class RESTClient:
                     return headers[key] == value
         return None
 
+    def _prep_request(self, api_url, params=None):
+        filters = []
+        if self.oauth:
+            consumer = oauth.Consumer(
+                key=self.oauth['consumer_key'],
+                secret=self.oauth['consumer_secret']
+            )
+            token = oauth.Token(
+                key=self.oauth['token'],
+                secret=self.oauth['token_secret']
+            )
+            oauth_filter = OAuthFilter('*', consumer, token)
+            filters.append(oauth_filter)
+        return Resource(api_url, filters=filters)
+
+    def _build_url(self, api, query):
+        path = util.pretty_path(
+            '/'.join(['', self.url['path'], api]),
+            True,
+            False
+        )
+        url = '%s://%s:%s%s' % (
+            self.url['scheme'], self.url['hostname'], self.url['port'], path
+        )
+        # has the base URL been set to include query params?
+        if self.url['query']:
+            url = self.merge_query(url, self.url['query'])
+        # add in manually passed query args
+        if query:
+            url = self.merge_query(url, query)
+        # with everything merged into the URL, do a final split
+        if url.find('?') >= 0:
+            (url, query) = url.split('?', 1)
+        else:
+            query = ''
+        # return the full URL, as well as our final query
+        return url, query
+
     def request(self, method, api, params=None, query=None, headers=None,
-                verbose=False, meta=False
-                ):
-        '''REST API invoker'''
-        # check and prep the data
+                verbose=False, meta=False):
+        # normalize the API parameters
         if method is None or method == '':
-            method = 'GET'
-        method = method.upper()
+            method = 'get'
+        method = method.lower()
         if api == '' or api is None:
             api = '/'
         if params is None:
             params = {}
+        if type(query) == list:
+            query = '&'.join(query)
+        elif type(query) == dict:
+            query = self.build_query(query)
         if api.find('?') >= 0:
             api, api_query = api.split('?', 1)
-        api = urllib.quote(api)
-        http = self.http
-        # figure out the URL
+            # TODO: tests whether query args need to be in the URL or params for oauth signing
+            query = self.merge_query(api_query, query)
+        # merge in base URL params
+        url, query = self._build_url(api, query)
+        # trust the reskit will quoting...
+        resource = self._prep_request(url, params)
+        # prep the rest of the request args
         headers = headers if isinstance(headers, dict) else {}
-        if not self.get_header(headers, 'Content-Type') and method != 'GET':
+        # set the header unless we have a content-type already specified
+        if not self.get_header(headers, 'Content-Type') and method != 'get':
             headers['Content-Type'] = 'application/json'
         headers['Accept'] = 'application/json'
-        path = util.pretty_path('/'.join(('', self.url['path'], api)), True, False)
-        url = '%s://%s%s' % (
-            self.url['scheme'], self.url['hostname'], path
-        )
-        # add a header for oauth2 if needed
-        if self.oauth:
-            headers['Authorization'] = self.get_oauth_header(method, url, params)
-        # were extra query params passed in explicitly?
-        if query:
-            url = self.merge_query(url, query)
-        # has the base URL been set to include query params?
-        if self.url['query']:
-            url = self.merge_query(url, self.url['query'])
-        if method == 'GET':
-            get_params = self.build_query(params)
-            url = self.merge_query(url, get_params)
-            data = ''
+        header_list = []
+        for hdr_name in headers:
+            hdr_value = headers[hdr_name]
+            header_list.append((hdr_name, hdr_value))
+        for cookie in self.cookies:
+            header_list.append(('Cookie', cookie))
+        request_args = {
+            'headers': headers
+        }
+        if method == 'get':
+            # convert the query to an obj for final use
+            query_obj = self.build_query_obj(query)
+            if params:
+                query_obj.update(params)
+            request_args['params_dict'] = query_obj
+            payload = ''
         else:
             if self.get_header(headers, 'Content-Type', 'application/json'):
-                data = self.encode(params)
+                payload = self.encode(params)
             else:
-                data = urllib.urlencode(params)
-        # fire away
+                # not sure >how< to encode, so good 'nuff for now
+                payload = urllib.urlencode(params)
+            request_args['payload'] = payload
+        # fire away!
         if verbose:
             sys.stderr.write(
                 '# Request: %s %s, body: "%s"\n' % (
-                    method, url, data
+                    method.upper(), url, payload
                 )
             )
             sys.stderr.write('# Request Headers: %s\n' % str(headers))
-            if http.cookies:
-                sys.stderr.write(' # Request Cookies: %s\n' % str(http.cookies))
-        # be willing to try again if the socket got closed on us (e.g. timeout)
-        tries = 0
-        max_tries = 3
-        response = None
-        last_error = None
-        while tries < max_tries and response is None:
-            tries += 1
-            try:
-                # start the request
-                http.putrequest(method, url)
-                # send our headers
-                for hdr, value in headers.iteritems():
-                    http.putheader(hdr, value)
-                # and our cookies too!
-                if http.cookies:
-                    [http.putheader('Cookie', value) for value in http.cookies]
-                # write the body
-                if data:
-                    body_len = len(data)
-                    if body_len:
-                        http.putheader('Content-Length', str(body_len))
-                http.endheaders()
-                if data:
-                    http.send(data)
-                # get our response back from the server and parse
-                response = http.getresponse()
-            except socket.error as e:
-                last_error = e
-                http.connect()
-            except Exception as e:
-                last_error = e
-                http.close()
-        if response is None:
-            raise Exception('HTTP request failed and could not be retried: %s' % last_error)
-        # see if we get a cookie back
-        response_headers = str(response.msg).split('\n')
-        # note that we ignore the path
-        cookies = [c.split(': ')[1].split('; ')[0]
-                   for c in response_headers if c.startswith('Set-Cookie: ')]
-        if cookies:
-            http.cookies = cookies
+            if self.cookies:
+                sys.stderr.write(' # Request Cookies: %s\n' % str(self.cookies))
+        try:
+            response = getattr(resource, method)(**request_args)
+            response_data = response.body_string()
+        except RequestFailed as e:
+            response = e.response
+            response_data = e.message
+        except ResourceNotFound as e:
+            response = e.response
+            response_data = e.message
+        except Unauthorized as e:
+            response = e.response
+            response_data = e.message
+        # see if we get a cookie back; note that we ignore the path
+        self.cookies = []
+        for hdr_name, hdr_value in response.headerslist:
+            if hdr_name.lower() == 'set-cookie':
+                self.cookies.append(hdr_value.split('; ')[0])
         if verbose:
             sys.stderr.write(
-                '# Response Status: %s %s\n# Response Headers: %s\n' %
-                (response.status, response.reason, self.encode(
-                    str(response.msg).strip().split('\r\n')
-                ))
+                '# Response Status: %s\n# Response Headers: %s\n' % (
+                    response.status, self.encode(response.headers)
+                )
             )
-        content_type = response.getheader('Content-Type') or ''
-        response_data = response.read()
+        content_type = response.headers.get('Content-Type')
         if not content_type.startswith("application/json"):
-            payload = response_data
+            decoded_body = response_data
         else:
             try:
-                payload = self.decode(response_data)
+                decoded_body = self.decode(response_data)
             except:
                 raise Exception('Failed to decode API response\n' + response_data)
-        if response.status < 200 or response.status >= 300:
-            raise Exception('API "%s" failed (%d %s)\n%s' %
-                            (urllib.unquote(api), response.status,
-                             response.reason, response_data))
-        return payload
+        if response.status_int < 200 or response.status_int >= 300:
+            raise APIException(
+                '"%s %s" failed (%s)' % (
+                    method.upper(), api, response.status
+                ),
+                decoded_body
+            )
+        return decoded_body
 
 if __name__ == '__main__':
     dbg.pretty_print(RESTClient())
