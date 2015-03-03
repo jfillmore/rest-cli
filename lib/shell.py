@@ -18,6 +18,7 @@ except:
     import simplejson
     json = simplejson
 
+from restkit.errors import RequestError
 
 import util
 import dbg
@@ -435,11 +436,22 @@ EXAMPLES:
                     args['headers'],
                     args['verbose']
                 )
+                response_status = None
                 success = True
+            except client.APIException as e:
+                success = False
+                response_status = e.message
+                response = e.response
             except Exception as e:
                 success = False
+                response_status = 'Internal Error'
                 response = e.message
+            except RequestError as e:
+                response = e.message
+                response_status = 'Request Error'
+                success = False
             except socket.error as e:
+                assert False, "Socket errors shouldn't happen anymore..."
                 success = False
                 response = unicode(e)
             self.last_rv = int(not success)
@@ -455,6 +467,7 @@ EXAMPLES:
             try:
                 return self.run_cmd(args['verb'], args['cmd_args'])
             except Exception as e:
+                response_status = 'Syntax Error'
                 response = e.message
                 success = False
         # adjust the response object as requested
@@ -466,6 +479,9 @@ EXAMPLES:
                     exclude=args['json_exclude'],
                     raw=True
                 )
+                # if we only had one match return it instead of a single-element array for cleanliness
+                if len(response) == 1:
+                    response = response[0]
             except:
                 (exc_type, exc_msg, exc_tb) = sys.exc_info()
                 sys.stderr.write('! %s\n' % exc_msg)
@@ -473,6 +489,7 @@ EXAMPLES:
         self._print_response(
             success,
             response,
+            response_status,
             formatted=args['formatted'],
             color=args['color'],
             invert_color=args['invert_color'],
@@ -482,7 +499,7 @@ EXAMPLES:
         )
         return True
 
-    def _print_response(self, success, response, **args):
+    def _print_response(self, success, response, status=None, **args):
         if success:
             if response is not None:
                 if 'stdout_redir' in args and args['stdout_redir'] is not None:
@@ -514,7 +531,20 @@ EXAMPLES:
                         else:
                             print json.dumps(response, indent=4, sort_keys=True)
         else:
-            sys.stderr.write('! ' + response + '\n')
+            if isinstance(response, basestring):
+                sys.stderr.write('! %s:\n%s\n' % (
+                    status, response
+                ))
+            else:
+                sys.stderr.write('! %s:\n' % (status))
+                if args.get('formatted'):
+                    dbg.pretty_print(
+                        response,
+                        color=args.get('color'),
+                        invert_color=args.get('invert_color')
+                    )
+                else:
+                    print json.dumps(response, indent=4, sort_keys=True)
 
     def env(self, key, value=None):
         key = key.lower()
@@ -614,7 +644,7 @@ EXAMPLES:
             path = ''
             if len(params):
                 path = params[0]
-            self.env('cwd', self.parse_path(path, False, False))
+            self.env('cwd', self.parse_path(path))
         elif cmd == 'config':
             dbg.pp(self.args)
             sys.stdout.write('\n')
