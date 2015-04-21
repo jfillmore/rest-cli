@@ -188,31 +188,6 @@ class RESTClient:
             result = result[:-1]
         return result
 
-    def get_oauth_header(self, method, url, params=None):
-        import oauth2
-        consumer = oauth2.Consumer(
-            key=self.oauth['consumer_key'],
-            secret=self.oauth['consumer_secret']
-        )
-        token = oauth2.Token(
-            key=self.oauth['token'],
-            secret=self.oauth['token_secret']
-        )
-        oauth_params = {
-            'oauth_timestamp': int(time.time()),
-            'oauth_version': '1.0',
-            'oauth_nonce': 1,
-            'oauth_consumer_key': consumer.key,
-            'oauth_token': token.key
-        }
-        params = dict(params.items() + oauth_params.items()) \
-            if params else oauth_params
-        request = oauth2.Request(
-            method=method, url=url, parameters=params)
-        request.sign_request(
-            oauth2.SignatureMethod_HMAC_SHA1(), consumer, token)
-        return request.to_header()['Authorization']
-
     def merge_query(self, query1, query2=None):
         if not query2:
             return query1
@@ -291,7 +266,7 @@ class RESTClient:
             query = self.merge_query(api_query, query)
         # merge in base URL params
         url, query = self._build_url(api, query)
-        # trust the reskit will quoting...
+        # trust that reskit will do quoting...
         resource = self._prep_request(url, params)
         # prep the rest of the request args
         headers = headers if isinstance(headers, dict) else {}
@@ -330,6 +305,8 @@ class RESTClient:
                 )
             )
             sys.stderr.write('# Request Headers: %s\n' % str(headers))
+            if self.oauth:
+                sys.stderr.write('# Oauth consumer key: %s\n' % self.oauth['consumer_key'])
             if self.cookies:
                 sys.stderr.write(' # Request Cookies: %s\n' % str(self.cookies))
         try:
