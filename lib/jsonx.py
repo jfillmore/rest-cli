@@ -278,7 +278,8 @@ def extract_path(obj, path, separator='/', prefix='', quiet=False, debug=False):
 
 
 def jsonx(data, indent=4, pairs=False, sort_keys=True, debug=False,
-          quiet=False, separator='/', extract=None, exclude=None, exists=None, raw=False):
+          quiet=False, separator='/', extract=None, exclude=None, exists=None,
+          raw=False, data_map=None, data_store=None):
     if isinstance(data, basestring):
         obj = json.JSONDecoder().decode(data)
     else:
@@ -297,6 +298,16 @@ def jsonx(data, indent=4, pairs=False, sort_keys=True, debug=False,
                 # QQ, not found
                 retval = 1
                 break
+    if data_map:
+        for (key, path) in data_map:
+            data_store[key] = extract_path(
+                obj,
+                path.strip('/'),
+                path.strip('/'),
+                separator=separator,
+                quiet=True,
+                debug=debug
+            )
     # trim out any requested data
     if exclude:
         for path in exclude:

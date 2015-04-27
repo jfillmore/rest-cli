@@ -3,6 +3,7 @@
 
 """Client for talking to a RESTful API server."""
 
+from collections import namedtuple
 import urllib
 import urlparse
 try:
@@ -10,6 +11,7 @@ try:
 except:
     import simplejson
     json = simplejson
+import Cookie
 import re
 import sys
 import dbg
@@ -31,6 +33,9 @@ from restkit.errors import (
 import util
 
 
+Response = namedtuple('Response', ['meta', 'decoded', 'raw'])
+
+
 class APIException(Exception):
 
     def __init__(self, error, response):
@@ -45,7 +50,7 @@ class RESTClient:
     def __init__(self, url='localhost'):
         # the base URL information for construction API requests
         self.url = None
-        self.cookies = []  # session cookie cache
+        self.cookies = {}  # session cookie cache
         # if set, an oauth authentication header will be included in each request
         self.oauth = None
         self.set_url(url)
@@ -247,7 +252,7 @@ class RESTClient:
         return url, query
 
     def request(self, method, api, params=None, query=None, headers=None,
-                verbose=False, meta=False):
+                verbose=False, full=False):
         # normalize the API parameters
         if method is None or method == '':
             method = 'get'
@@ -274,15 +279,14 @@ class RESTClient:
         if not self.get_header(headers, 'Content-Type') and method != 'get':
             headers['Content-Type'] = 'application/json'
         headers['Accept'] = 'application/json'
-        header_list = []
+        request_args = {
+            'headers': []
+        }
         for hdr_name in headers:
             hdr_value = headers[hdr_name]
-            header_list.append((hdr_name, hdr_value))
-        for cookie in self.cookies:
-            header_list.append(('Cookie', cookie))
-        request_args = {
-            'headers': headers
-        }
+            request_args['headers'].append((hdr_name, hdr_value))
+        for name in self.cookies:
+            request_args['headers'].append(('Cookie', '='.join([name, self.cookies[name]])))
         if method == 'get':
             # convert the query to an obj for final use
             query_obj = self.build_query_obj(query)
@@ -300,15 +304,15 @@ class RESTClient:
         # fire away!
         if verbose:
             sys.stderr.write(
-                '# Request: %s %s, body: "%s"\n' % (
-                    method.upper(), url, payload
-                )
+                '# Request: %s %s\n' % (method.upper(), url)
             )
+            if payload:
+                sys.stderr.write('# Request Body: %s\n' % payload)
             sys.stderr.write('# Request Headers: %s\n' % str(headers))
             if self.oauth:
                 sys.stderr.write('# Oauth consumer key: %s\n' % self.oauth['consumer_key'])
             if self.cookies:
-                sys.stderr.write(' # Request Cookies: %s\n' % str(self.cookies))
+                sys.stderr.write('# Request Cookies: %s\n' % str(self.cookies))
         try:
             response = getattr(resource, method)(**request_args)
             response_data = response.body_string()
@@ -322,10 +326,11 @@ class RESTClient:
             response = e.response
             response_data = e.message
         # see if we get a cookie back; note that we ignore the path
-        self.cookies = []
         for hdr_name, hdr_value in response.headerslist:
             if hdr_name.lower() == 'set-cookie':
-                self.cookies.append(hdr_value.split('; ')[0])
+                cookies = Cookie.BaseCookie(hdr_value)
+                for name in cookies:
+                    self.cookies[name] = cookies[name].value
         if verbose:
             sys.stderr.write(
                 '# Response Status: %s\n# Response Headers: %s\n' % (
@@ -334,20 +339,23 @@ class RESTClient:
             )
         content_type = response.headers.get('Content-Type')
         if not content_type.startswith("application/json"):
-            decoded_body = response_data
+            decoded = response_data
         else:
             try:
-                decoded_body = self.decode(response_data)
+                decoded = self.decode(response_data)
             except:
                 raise Exception('Failed to decode API response\n' + response_data)
-        if response.status_int < 200 or response.status_int >= 300:
+        response = Response(meta=response, decoded=decoded, raw=response_data)
+        if response.meta.status_int < 200 or response.meta.status_int >= 400:
             raise APIException(
                 '"%s %s" failed (%s)' % (
-                    method.upper(), api, response.status
+                    method.upper(), api, response.meta.status
                 ),
-                decoded_body
+                response,
             )
-        return decoded_body
+        if full:
+            return response
+        return decoded
 
 if __name__ == '__main__':
     dbg.pretty_print(RESTClient())

@@ -2,8 +2,10 @@
 
 """Shell for interacting with a RESTful server."""
 
+from traceback import print_exception
 import re
 from urllib import quote
+from collections import namedtuple
 import os
 import sys
 import os.path
@@ -24,6 +26,17 @@ import util
 import dbg
 import client
 from jsonx import jsonx
+from htmlx import htmlx
+
+
+xml_content_types = [
+    'application/xhtml+xml',
+    'application/xml',
+    'text/html',
+    'text/xml'
+]
+
+DataMap = namedtuple('DataMap', ['key', 'path'])
 
 
 class JSONException(Exception):
@@ -59,19 +72,11 @@ class Shell:
     _env = {
         'cwd': '/',  # where in the URL we are operating
         'last_cwd': '/',
-        'histfile': None
+        'histfile': None,
+        'vars': {}  # automatically added to each API call
     }
-    # our default arguments
-    default_args = {
-        'color': sys.stdout.isatty(),
-        'help': False,
-        'formatted': True,
-        'headers': {},
-        'verbose': False,
-        'url': 'https://localhost:443/',
-        'shell': False
-    }
-    decode = json.JSONDecoder().decode  # JSON decoding
+    decode = json.JSONDecoder().decode
+    encode = json.JSONEncoder().encode
 
     def __init__(self, argv):
         self.last_rv = False
@@ -79,8 +84,18 @@ class Shell:
             'histfile',
             os.path.join(os.path.expanduser('~'), '.rest-cli_history')
         )
+        self.main_args = {
+            'color': sys.stdout.isatty(),
+            'help': False,
+            'formatted': True,
+            'headers': {},
+            'verbose': False,
+            'url': 'https://localhost:443/',
+            'shell': False
+        }
+        self.data_store = {}
         # parse out our initial args
-        self.args = self.parse_args(argv, self.default_args)
+        self.args = self.parse_args(argv, self.main_args)
         self.client = client.RESTClient(self.args['url'])
         if self.args['help']:
             return
@@ -161,22 +176,23 @@ ARGUMENTS
 ---------------------------------------------------------------------------
 
 HTTP OPTIONS (each may be specified multiple times)
-   -F, --file FILE          File to add to request.
-   -Q, --query QUERY_DATA     Query data to include (e.g. foo=bar&food=yummy).
-   -P, --post POST_DATA     Extra POST data to add to request.
+   -f, --form               Override default of sending JSON data
    -H, --header HEADER      HTTP header (e.g. 'Foo: bar') .
+   -Q, --query QUERY_DATA   Query data to include (e.g. foo=bar&food=yummy).
+   -d, --data NAME[+]=PATH  Store response data; '+' also adds variable to the env
+
 
 OTHER OPTIONS (may also be set via 'set' command)
-   -q, --quiet              Do not print API return response.
-   -r, --raw                Don't format response data; return raw response.
-   -v, --verbose            Print verbose debugging info to stderr.
-   -i, --invert             Invert colors in formatted JSON responses.
    -C, --no-color           Do not color formatted JSON responses.
    -h, --help               This information.
-   -u, --url URL            URL to the API location (default: https://localhost/).
+   -I, --invert             Invert colors in formatted JSON responses.
    -j, --json STRING        Append JSON-encoded list to API parameters.
-   -s, --shell              Shell mode for running multiple APIs within a session.
    -O, --oauth CK CS T TS   Authenticate via OAuth using the supplied consumer key, secret, token, and token secret.
+   -q, --quiet              Do not print API return response.
+   -r, --raw                Don't format response data; return raw response.
+   -s, --shell              Shell mode for running multiple APIs within a session.
+   -u, --url URL            URL to the API location (default: https://localhost/).
+   -v, --verbose            Print verbose debugging info to stderr.
    -x, --extract PATH       Parse JSON to only return requested data; may be repeated.
    -X, --exclude PATH       Exclude specified path from JSON data; may be repeated.
 
@@ -191,7 +207,15 @@ Dictionaries can be created on demand using dot notation. Multiple params within
    foo:='{"bar":3}'         {"foo": {"bar": 3}}
    foo.bar:=3.14            {"foo": {"bar": 3.14}}
 
-JSON PATHS
+Variables in memory (e.g. shown by 'data' command) may be referenced using "+=" as the operator.
+
+
+HTML/XML PATHS (--extract, --data)
+---------------------------------------------------------------------------
+Values are extracted using 'pgquery', a Python port of jQuery. This can be used to extract and store values from input forms.
+
+
+JSON PATHS  (--extract, --exclude, --data)
 ---------------------------------------------------------------------------
 The JSON data can be filtered based on index, key matches, ranges, etc.
 
@@ -216,6 +240,8 @@ SHELL COMMANDS
    set                      Set configuration options.
    config                   List current configuration infomation.
    sh CMD                   Run a BASH shell command.
+   data [NAME] [-=NAME]     List variables in memory, optionally by name; -= to remove from memory
+   env [NAME] [[+-]=NAME]   List environmental variables, optionally by name; += or -= to add/remove 'data' from the environment
    > FILE                   Write API response to specified file.
    >> FILE                  Append API response to specified file.
 
@@ -236,12 +262,13 @@ EXAMPLES:
             'api_args': {},
             'cmd_args': [],
             'headers': {},
-            'json_extract': [],
-            'json_exclude': [],
+            'data': [],
+            'extract': [],
+            'exclude': [],
             'invert_color': False,
-            'color': self.default_args['color'],
-            'formatted': self.default_args['formatted'],
-            'url': self.default_args['url'],
+            'color': self.main_args['color'],
+            'formatted': self.main_args['formatted'],
+            'url': self.main_args['url'],
             'verbose': False,
             'stdout_redir': None,
             'redir_type': None,
@@ -249,7 +276,6 @@ EXAMPLES:
             'query': [],
             'help': False,  # user just wanted some help
             'FILES': [],
-            'POST': [],
             'oauth': {
                 'consumer_key': None,
                 'consumer_secret': None,
@@ -262,9 +288,10 @@ EXAMPLES:
         else:
             parts = expr  # already a list
         # check for any condensed parameters (e.g. -fr = -f, -r)
-        old_parts = parts
+        old_parts = parts[:]
         for i in range(0, len(parts)):
-            if len(parts[i]) > 2 and parts[i][0] == '-' and parts[i][1] != '-':
+            part = parts[i]
+            if len(part) > 2 and part[0] == '-' and not (part[1] in ['-', '+', '=']):
                 # expand the parameters out
                 parts = parts[:i] + \
                     [''.join(['-', param]) for param in parts[i][1:]] + \
@@ -305,6 +332,7 @@ EXAMPLES:
                 if not os.path.isfile(path):
                     raise Exception("Unable to either read or locate file '%s." % path)
                 args['FILES'][name] = path
+                raise Exception("Not supported at the moment")
             elif part == '-Q' or part == '--query':
                 i += 1
                 if i == len(parts):
@@ -313,21 +341,14 @@ EXAMPLES:
                 if parts[i].find('=') == -1 or parts[i].find('&') != -1:
                     raise Exception("Invalid query name=value pair.")
                 args['query'].append(parts[i])
-            elif part == '-P' or part == '--post':
-                i += 1
-                if i == len(parts):
-                    raise Exception("Missing POST name=value pair.")
-                # make sure we have a valid pair
-                if parts[i].find('=') == -1 or parts[i].find('&') != -1:
-                    raise Exception("Invalid POST name=value pair.")
-                args['POST'].append(parts[i])
-                raise Exception("TODO: form-style post not implemented")
             elif part == '-i' or part == '--invert':
                 args['invert_color'] = True
             elif part == '-C' or part == '--no-color':
                 args['color'] = False
             elif part == '-v' or part == '--verbose':
                 args['verbose'] = True
+            elif part == '-f' or part == '--form':
+                args['headers']['content-type'] = 'application/x-www-form-urlencoded'
             elif part == '-O' or part == '--oauth':
                 # the next 4 parameters are for oauth
                 if i + 4 == len(parts):
@@ -349,7 +370,7 @@ EXAMPLES:
                 h_parts = parts[i].split(': ', 1)
                 if len(h_parts) != 2:
                     raise Exception("Invalid HTTP header.")
-                args['headers'][h_parts[0]] = h_parts[1]
+                args['headers'][h_parts[0].toLowerCase()] = h_parts[1]
             elif part == '-s' or part == '--shell':
                 args['shell'] = True
             elif part == '-j' or part == '--json':
@@ -375,16 +396,24 @@ EXAMPLES:
                 if i == len(parts):
                     raise Exception("Missing value for URL.")
                 args['url'] = parts[i]
+            elif part == '-d' or part == '--data':
+                i += 1
+                if i == len(parts):
+                    raise Exception("Missing value for --data.")
+                part = parts[i]
+                if part.index('=') == -1:
+                    raise Exception("Invalid parameter for --data: expected format NAME[+]=PATH")
+                args['data'].append(DataMap(*part.split('=', 1)))
             elif part == '-x' or part == '--extract':
                 i += 1
                 if i == len(parts):
                     raise Exception("Missing value for --extract.")
-                args['json_extract'].append(parts[i])
+                args['extract'].append(parts[i])
             elif part == '-X' or part == '--exclude':
                 i += 1
                 if i == len(parts):
                     raise Exception("Missing value for --exclude.")
-                args['json_exclude'].append(parts[i])
+                args['exclude'].append(parts[i])
             else:
                 # we always pick up the command/method first
                 if args['verb'] is None:
@@ -416,6 +445,7 @@ EXAMPLES:
         # not writing to a file by default
         file = None
         # run the command or API
+        answer = None
         if args['verb'] is None or len(args['verb']) == 0:
             if self.args['shell']:
                 # no command, just do nothing
@@ -428,20 +458,24 @@ EXAMPLES:
         elif args['verb'] in self.http_methods:
             # run an API
             try:
-                response = self.client.request(
-                    args['verb'],
-                    args['api'],
-                    args['api_args'],
-                    args['query'],
-                    args['headers'],
-                    args['verbose']
+                args['api_args'].update(self.env('vars'))
+                answer = self.client.request(
+                    method=args['verb'],
+                    api=args['api'],
+                    params=args['api_args'],
+                    query=args['query'],
+                    headers=args['headers'],
+                    verbose=args['verbose'],
+                    full=True
                 )
+                response = answer.decoded
                 response_status = None
                 success = True
             except client.APIException as e:
                 success = False
                 response_status = e.message
-                response = e.response
+                response = e.response.decoded
+                answer = e.response
             except Exception as e:
                 success = False
                 response_status = 'Internal Error'
@@ -465,27 +499,63 @@ EXAMPLES:
         else:
             # run an internal command
             try:
-                return self.run_cmd(args['verb'], args['cmd_args'])
+                return self.run_cmd(args['verb'], args['cmd_args'], args)
             except Exception as e:
                 response_status = 'Syntax Error'
                 response = e.message
                 success = False
+                if args['verbose']:
+                    print_exception(*sys.exc_info())
         # adjust the response object as requested
-        if args['json_extract'] or args['json_exclude']:
-            try:
-                response = jsonx(
-                    response,
-                    extract=args['json_extract'],
-                    exclude=args['json_exclude'],
-                    raw=True
-                )
-                # if we only had one match return it instead of a single-element array for cleanliness
-                if len(response) == 1:
-                    response = response[0]
-            except:
-                (exc_type, exc_msg, exc_tb) = sys.exc_info()
-                sys.stderr.write('! %s\n' % exc_msg)
-                return True
+        if answer and (args['extract'] or args['exclude'] or args['data']):
+            # handle HTML vs JSON differently
+            content_type = answer.meta.headers.get('Content-Type')
+            to_store = {}
+            if content_type.startswith("application/json"):
+                try:
+                    response = jsonx(
+                        response,
+                        extract=args['extract'],
+                        exclude=args['exclude'],
+                        raw=True,
+                        data_map=args['data'],
+                        data_store=to_store
+                    )
+                    # if we only had one match return it instead of a single-element array for cleanliness
+                    if len(response) == 1:
+                        response = response[0]
+                except:
+                    (exc_type, exc_msg, exc_tb) = sys.exc_info()
+                    sys.stderr.write('! %s\n' % exc_msg)
+                    return True
+            elif any([content_type.startswith(xml_type) for
+                      xml_type in xml_content_types]):
+                # it looks like HTML so try parsing that out instead
+                try:
+                    response = htmlx(
+                        response,
+                        extract=args['extract'],
+                        data_map=args['data'],
+                        data_store=to_store
+                    )
+                    # if we only had one match return it instead of a single-element array for cleanliness
+                    if len(response) == 1:
+                        response = response[0]
+                except:
+                    (exc_type, exc_msg, exc_tb) = sys.exc_info()
+                    sys.stderr.write('! %s\n' % exc_msg)
+                    return True
+            # if we ended up storing any data, save it memory, noting any environmentals
+            for key in to_store:
+                # coerce single-values out of lists to stand on their own
+                if len(to_store[key]) == 1:
+                    to_store[key] = to_store[key][0]
+                clean_key = key
+                if key.endswith('+'):
+                    clean_key = key[:-1]
+                self.data_store[clean_key] = to_store[key]
+                if key.endswith('+'):
+                    self.env('vars')[clean_key] = to_store[key]
         self._print_response(
             success,
             response,
@@ -514,9 +584,9 @@ EXAMPLES:
                 else:
                     if isinstance(response, basestring):
                         if args.get('formatted'):
-                            print response[0:512]
+                            print response[0:256]
                             sys.stderr.write(
-                                '# 512/%d bytes, use --raw|-r to see full output\n'
+                                '# 256/%d bytes, use --raw|-r to see full output\n'
                                 % len(response)
                             )
                         else:
@@ -570,10 +640,15 @@ EXAMPLES:
             param = param.lstrip('!')
         else:
             value = param_parts.pop()
-            # we we need to json-decode the value?
+            # check to see if we have a JSON value or are fetching from memory
             if param.endswith(':'):  # e.g. 'foo:={"bar":42}'
                 value = self.decode(value)
                 param = param.rstrip(':')
+            elif param.endswith('+'):
+                param = param.rstrip('+')
+                if param not in self.data_store:
+                    raise Exception('Variable "%s" is not in memory' % param)
+                value = self.data_store[param]
         # check the name to see if we have a psuedo array
         # (e.g. 'foo.bar=3' => 'foo = {"bar": 3}')
         if param.find('.') == -1:
@@ -620,7 +695,11 @@ EXAMPLES:
             final_path = final_path + '/'
         return final_path
 
-    def run_cmd(self, cmd, params=[]):
+    def run_cmd(self, cmd, params=None, args=None):
+        if params is None:
+            params = []
+        if args is None:
+            args = {}
         if cmd == 'set':
             # break the array into the parts
             for str in params:
@@ -640,6 +719,53 @@ EXAMPLES:
                     self.set_edit_mode(val)
                 else:
                     raise Exception("Unrecognized configuration option: " + param + ".")
+        elif cmd == 'env':
+            sys.stdout.write('ENV:\n')
+            if not params:
+                params = self.env('vars').keys()
+            for param in params:
+                remove = False
+                add = False
+                if param.startswith('-='):
+                    remove = True
+                    param = param[2:]
+                if param.startswith('+='):
+                    add = True
+                    param = param[2:]
+                if add and param in self.data_store:
+                    self.env('vars')[param] = self.data_store[param]
+                if param in self.env('vars'):
+                    value = self.env('vars')[param]
+                    if remove:
+                        sys.stdout.write('%s -= ' % (param))
+                        del self.env('vars')[param]
+                    elif add:
+                        sys.stdout.write('%s +=' % (param))
+                    else:
+                        sys.stdout.write('%s = ' % (param))
+                    sys.stdout.write(self.encode(value))
+                    sys.stdout.write('\n')
+        elif cmd == 'debug':
+            import pdb
+            pdb.set_trace()
+        elif cmd == 'data':
+            sys.stdout.write('DATA:\n')
+            if not params:
+                params = self.data_store.keys()
+            for param in params:
+                remove = False
+                if param.startswith('-='):
+                    remove = True
+                    param = param[2:]
+                if param in self.data_store:
+                    value = self.data_store[param]
+                    if remove:
+                        sys.stdout.write('%s -= ' % (param))
+                        del self.data_store[param]
+                    else:
+                        sys.stdout.write('%s = ' % (param))
+                    sys.stdout.write(self.encode(value))
+                    sys.stdout.write('\n')
         elif cmd == 'cd':
             path = ''
             if len(params):
