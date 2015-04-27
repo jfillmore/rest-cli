@@ -584,10 +584,11 @@ EXAMPLES:
                 else:
                     if isinstance(response, basestring):
                         if args.get('formatted'):
-                            print response[0:256]
+                            max_bytes = min(len(response), 256)
+                            print response[0:max_bytes]
                             sys.stderr.write(
-                                '# 256/%d bytes, use --raw|-r to see full output\n'
-                                % len(response)
+                                '# %d/%d bytes, use --raw|-r to see full output\n'
+                                % (max_bytes, len(response))
                             )
                         else:
                             print response
