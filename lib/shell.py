@@ -43,7 +43,7 @@ class JSONException(Exception):
     pass
 
 
-class Shell:
+class Shell(object):
     """Shell for interacting with REST client."""
     # a list of our internal commands
     http_methods = (
@@ -370,7 +370,7 @@ EXAMPLES:
                 h_parts = parts[i].split(': ', 1)
                 if len(h_parts) != 2:
                     raise Exception("Invalid HTTP header.")
-                args['headers'][h_parts[0].toLowerCase()] = h_parts[1]
+                args['headers'][h_parts[0].lower()] = h_parts[1]
             elif part == '-s' or part == '--shell':
                 args['shell'] = True
             elif part == '-j' or part == '--json':
