@@ -787,5 +787,5 @@ EXAMPLES:
 
 
 if __name__ == '__main__':
-    import lib.dbg
+    import rest_cli.dbg
     dbg.pretty_print(Shell())

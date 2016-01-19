@@ -239,10 +239,10 @@ class RESTClient:
         )
         # has the base URL been set to include query params?
         if self.url['query']:
-            url = self.merge_query(url, self.url['query'])
+            url = self.merge_url_query(url, self.url['query'])
         # add in manually passed query args
         if query:
-            url = self.merge_query(url, query)
+            url = self.merge_url_query(url, query)
         # with everything merged into the URL, do a final split
         if url.find('?') >= 0:
             (url, query) = url.split('?', 1)
@@ -308,6 +308,8 @@ class RESTClient:
             )
             if payload:
                 sys.stderr.write('# Request Body: %s\n' % payload)
+            elif 'params_dict' in request_args:
+                sys.stderr.write('# Request Query: %s\n' % request_args['params_dict'])
             sys.stderr.write('# Request Headers: %s\n' % str(headers))
             if self.oauth:
                 sys.stderr.write('# Oauth consumer key: %s\n' % self.oauth['consumer_key'])

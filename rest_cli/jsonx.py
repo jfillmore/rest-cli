@@ -3,6 +3,7 @@
 # TODO:
 #   * 'grep -v' to selectively hide instead of include
 #   * '//foo' floating extraction
+#      - e.g. double slashes (or whatever the field separator is set to) designates "floating" paths (e.g. "//foo" matches 'foo' anywhere; "foo//bar" matches "bar" anywhere under "/foo")
 #   * filter (or include) results based on values (e.g. "-f 'foo/id >= 3'")
 #   * verbose debugging to troubleshoot filtering/extraction
 
@@ -36,7 +37,7 @@ ARGUMENTS:
    -i|--indent INDENT    Indent JSON formatted output with spaces (default: 4).
 
 PATHS
-    The JSON data can be filtered based on index, key matches, ranges, etc. The field separator between path parts can be changed with the -F|--fs option.
+    The JSON data can be filtered based on index, key matches, ranges, etc. The JSON object is mapped to a directory-like structure (e.g. '/dict/dict_key', '/array/0') syntax with some extra tricks. The field separator between path parts can be changed with the -F|--fs option.
 
     Arrays:
         By Index:
@@ -50,6 +51,8 @@ PATHS
         Regular Expressions:
          - 'foo/b..?r' = foo/bar, foo/beer
          - 'foo/bar/.*[pP]assw(or)?d' == anything within foo/bar that looks like a password
+    General:
+        - the root slash on paths is optional (e.g. 'foo/bar' == '/foo/bar')
 
 examples:
     > json='{"id": 3, "name: "bob", "lols": {"a": 1, "b": 2}}'
@@ -246,7 +249,10 @@ def exclude_path(obj, path, separator='/', prefix='', quiet=False, debug=False):
 
 
 def extract_path(obj, path, separator='/', prefix='', quiet=False, debug=False):
-    """Extract values from an object based on a path."""
+    """
+    Extract values from an object based on a path.
+    """
+
     # break the path into parts
     path_parts = path.split(separator)
     # keep track of the values we've collected
@@ -298,7 +304,8 @@ def jsonx(data, indent=4, pairs=False, sort_keys=True, debug=False,
                 # QQ, not found
                 retval = 1
                 break
-    if data_map:
+    # a simple way to allow callers to maintain a memory of interesting values
+    if data_map and data_store is not None:
         for (key, path) in data_map:
             data_store[key] = extract_path(
                 obj,
@@ -395,3 +402,68 @@ if __name__ == '__main__':
         sys.stderr.write(e.message + "\n")
         retval = 1
     sys.exit(retval)
+
+
+
+# Needs to handle extract/exclude smarter, e.g.
+# - what does extract/exclude/extract mean? jsonx has a strict flow
+# - if we rtain structure on extraction do arrays get reindexed when affected?
+#
+#_PATH_SEPARATOR = '/'
+#
+#class PathParser(object):
+#
+#    def __init__(self, obj, separator=_PATH_SEPARATOR, quiet=False, debug=False):
+#        self.obj = obj
+#        self.quiet = quiet
+#        self.debug = debug
+#
+#    def exclude(path, separator=_PATH_SEPARATOR, quiet=None, debug=None):
+#        return self._exclude(path, separator=_PATH_SEPARATOR, quiet, debug)
+#
+#    def extract(path, separator=_PATH_SEPARATOR, quiet=None, debug=None):
+#        return self._extract(path, separator=_PATH_SEPARATOR, quiet, debug)
+#
+#    def _exclude(self, path, separator=_PATH_SEPARATOR, quiet=None, debug=None, prefix=''):
+#        if quiet is None:
+#            quiet = self.quiet
+#        if debug is None:
+#            debug = self.debug
+#        return self._traverse(self.obj, path, separator, quiet, debug, prefix, False)
+#
+#    def _extract(self, path, separator=_PATH_SEPARATOR, quiet=None, debug=None, prefix=''):
+#        if quiet is None:
+#            quiet = self.quiet
+#        if debug is None:
+#            debug = self.debug
+#        return self._traverse(self.obj, path, separator, quiet, debug, prefix, True)
+#
+#    def _traverse(self, obj, path, quiet, debug, prefix, prune=None):
+#        # break the path into parts
+#        path_parts = path.split(separator)
+#        floating = [part for part in path_parts if part.startswith(
+#        # keep track of the values we've collected
+#        excluded = []
+#        if prefix:
+#            prefix = prefix + separator
+#        for key in parse_keys(obj, path_parts[0], quiet):
+#            # try to get the value or next branch
+#            try:
+#                obj_ptr = obj[key]
+#            except:
+#                if not quiet:
+#                    raise Exception("Invalid key '%s' not found in object '%s'." % (key, dump_obj(obj)))
+#                continue
+#            # our current path thus far
+#            subpath = prefix + str(key)
+#            # at the end of our path? we've got what we want here
+#            if len(path_parts) == 1:
+#                del obj[key]
+#            else:
+#                self._traverse(
+#                    value,
+#                    separator.join(path_parts[1:]),
+#                    separator,
+#                    subpath,
+#                    quiet
+#                )
