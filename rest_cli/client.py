@@ -213,7 +213,7 @@ class RESTClient:
                     return headers[key] == value
         return None
 
-    def _prep_request(self, api_url, params=None):
+    def _prep_request(self, api_url):
         filters = []
         if self.oauth:
             consumer = oauth.Consumer(
@@ -234,8 +234,13 @@ class RESTClient:
             True,
             False
         )
-        url = '%s://%s:%s%s' % (
-            self.url['scheme'], self.url['hostname'], self.url['port'], path
+        port = self.url['port']
+        if port == 80 or port == 443:
+            port = ''
+        else:
+            port = ':' + str(port)
+        url = '%s://%s%s%s' % (
+            self.url['scheme'], self.url['hostname'], port, path
         )
         # has the base URL been set to include query params?
         if self.url['query']:
@@ -272,7 +277,7 @@ class RESTClient:
         # merge in base URL params
         url, query = self._build_url(api, query)
         # trust that reskit will do quoting...
-        resource = self._prep_request(url, params)
+        resource = self._prep_request(url)
         # prep the rest of the request args
         headers = headers if isinstance(headers, dict) else {}
         # set the header unless we have a content-type already specified
@@ -292,7 +297,8 @@ class RESTClient:
             query_obj = self.build_query_obj(query)
             if params:
                 query_obj.update(params)
-            request_args['params_dict'] = query_obj
+            if query_obj:
+                request_args['params_dict'] = query_obj
             payload = ''
         else:
             if self.get_header(headers, 'Content-Type', 'application/json'):
