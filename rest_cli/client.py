@@ -346,7 +346,7 @@ class RESTClient:
                 )
             )
         content_type = response.headers.get('Content-Type')
-        if not content_type.startswith("application/json"):
+        if not content_type or not content_type.startswith("application/json"):
             decoded = response_data
         else:
             try:
