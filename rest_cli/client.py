@@ -1,5 +1,8 @@
 #!/usr/bin/python -tt
 
+# TODO:
+# - JSON body for GET requests
+
 
 """Client for talking to a RESTful server. Maybe just even a regular web server."""
 
@@ -52,8 +55,9 @@ class RESTClient:
         # the base URL information for construction API requests
         self.url = None
         self.cookies = {}  # session cookie cache
-        # if set, an oauth authentication header will be included in each request
+        # if set, an oauth/basic authentication header will be included in each request
         self.oauth = None
+        self.basic_auth = None
         self.set_url(url)
         # TODO: python 2.7 supports an order tuple object we can use to preserve order :)
         self.encode = json.JSONEncoder().encode
@@ -75,6 +79,8 @@ class RESTClient:
         elif basic_auth:
             auth_parts = basic_auth.split(':', 1)
             filters.append(BasicAuth(auth_parts[0], auth_parts[1]))
+        elif self.basic_auth:
+            filters.append(BasicAuth(self.basic_auth['username'], self.basic_auth['password']))
         return Resource(api_url, filters=filters)
 
     def _build_url(self, path, query):
@@ -175,6 +181,12 @@ class RESTClient:
                     raise Exception("Missing value for OAuth key '%s'." %
                                     (item))
             self.oauth = creds
+
+    def load_basic_auth(self, username=None, password=None):
+        if username is not None and password is not None:
+            self.basic_auth = {'username': username, 'password': password}
+        else:
+            self.basic_auth = None
 
     def set_port(self, port):
         '''Set the port that will be used for requests.'''
