@@ -1,32 +1,28 @@
- ____  ____  ___  ____            ___  __    ____
-(  _ \( ___)/ __)(_  _)   ___    / __)(  )  (_  _)
- )   / )__) \__ \  )(    (___)  ( (__  )(__  _)(_
-(_)\_)(____)(___/ (__)           \___)(____)(____)
-
-
 usage: rest-cli http-verb|command API [API_PARAMS] [ARGUMENTS]
 
 ARGUMENTS
 ---------------------------------------------------------------------------
 
 HTTP OPTIONS (each may be specified multiple times)
-   -F, --file FILE          File to add to request.
-   -Q, --query QUERY_DATA     Query data to include (e.g. foo=bar&food=yummy).
-   -P, --post POST_DATA     Extra POST data to add to request.
+   -f, --form               Override default of sending JSON data
    -H, --header HEADER      HTTP header (e.g. 'Foo: bar') .
+   -Q, --query QUERY_DATA   Query data to include (e.g. foo=bar&food=yummy).
+   -d, --data NAME[+]=PATH  Store response data; '+' also adds variable to the env
+
 
 OTHER OPTIONS (may also be set via 'set' command)
-   -q, --quiet              Do not print API return response.
-   -r, --raw                Don't format response data; return raw response.
-   -v, --verbose            Print verbose debugging info to stderr.
-   -i, --invert             Invert colors in formatted JSON responses.
+   -B, --basic USER:PASS    HTTP basic authentication.
    -C, --no-color           Do not color formatted JSON responses.
    -h, --help               This information.
-   -u, --url URL            URL to the API location (default: https://localhost/).
+   -I, --invert             Invert colors in formatted JSON responses.
    -j, --json STRING        Append JSON-encoded list to API parameters.
-   -s, --shell              Shell mode for running multiple APIs within a session.
    -O, --oauth CK CS T TS   Authenticate via OAuth using the supplied consumer key, secret, token, and token secret.
-   -x, --extract PATH       Parse JSON to only return requested data; may be repeated.
+   -q, --quiet              Do not print API return response.
+   -r, --raw                Don't format response data; return raw response.
+   -s, --shell              Shell mode for running multiple APIs within a session.
+   -u, --url URL            URL to the API location (default: https://localhost/).
+   -v, --verbose            Print verbose debugging info to stderr.
+   -x, --extract PATH       Parse JSON/(X)HTML to only return requested data; may be repeated.
    -X, --exclude PATH       Exclude specified path from JSON data; may be repeated.
 
 API PARAMS
@@ -40,7 +36,15 @@ Dictionaries can be created on demand using dot notation. Multiple params within
    foo:='{"bar":3}'         {"foo": {"bar": 3}}
    foo.bar:=3.14            {"foo": {"bar": 3.14}}
 
-JSON PATHS
+Variables in memory (e.g. shown by 'data' command) may be referenced using "+=" as the operator.
+
+
+HTML/XML PATHS (--extract, --data)
+---------------------------------------------------------------------------
+Values are extracted using 'pgquery', a Python port of jQuery. This can be used to extract and store values from input forms.
+
+
+JSON PATHS  (--extract, --exclude, --data)
 ---------------------------------------------------------------------------
 The JSON data can be filtered based on index, key matches, ranges, etc.
 
@@ -65,6 +69,8 @@ SHELL COMMANDS
    set                      Set configuration options.
    config                   List current configuration infomation.
    sh CMD                   Run a BASH shell command.
+   data [NAME] [-=NAME]     List variables in memory, optionally by name; -= to remove from memory
+   env [NAME] [[+-]=NAME]   List environmental variables, optionally by name; += or -= to add/remove 'data' from the environment
    > FILE                   Write API response to specified file.
    >> FILE                  Append API response to specified file.
 

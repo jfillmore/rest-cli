@@ -11,7 +11,7 @@ def parse_values(items):
     return parsed
 
 
-def htmlx(data, extract=None, data_map=None, data_store=None):
+def htmlx(data, extract=None, data_map=None, data_store=None, parsed=True):
     try:
         doc = pq(data)
     except:
@@ -21,10 +21,10 @@ def htmlx(data, extract=None, data_map=None, data_store=None):
     if extract:
         results = []
         for path in extract:
-            items = parse_values(doc(path))
+            items = parse_values(doc(path)) if parsed else doc(path)
             results.append(items)
     if data_map:
         for (key, path) in data_map:
-            extracted = parse_values(doc(path))
+            extracted = parse_values(doc(path)) if parsed else doc(path)
             data_store[key] = extracted
     return results

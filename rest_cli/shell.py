@@ -2,18 +2,24 @@
 
 """Shell for interacting with a RESTful server."""
 
-from traceback import print_exception
-import re
-from urllib import quote
+# TODO:
+# - save last response for replay (e.g. full formatting)
+# - piping for less/etc
+
 from collections import namedtuple
+from traceback import print_exception
+from urllib import quote
 import os
-import sys
 import os.path
+import re
+import shlex  # simple lexical anaysis for command line parsing
 import socket
+import subprocess  # for shell commands
+import sys
+
+# import hacks!
 os.environ['TERM'] = 'linux'
 import readline
-import shlex  # simple lexical anaysis for command line parsing
-import subprocess  # for shell commands
 try:
     import json
 except:
@@ -22,11 +28,11 @@ except:
 
 from restkit.errors import RequestError
 
-import util
-import dbg
-import client
 from jsonx import jsonx
 from htmlx import htmlx
+import client
+import dbg
+import util
 
 
 xml_content_types = [
@@ -183,6 +189,7 @@ HTTP OPTIONS (each may be specified multiple times)
 
 
 OTHER OPTIONS (may also be set via 'set' command)
+   -B, --basic USER:PASS    HTTP basic authentication.
    -C, --no-color           Do not color formatted JSON responses.
    -h, --help               This information.
    -I, --invert             Invert colors in formatted JSON responses.
@@ -193,7 +200,7 @@ OTHER OPTIONS (may also be set via 'set' command)
    -s, --shell              Shell mode for running multiple APIs within a session.
    -u, --url URL            URL to the API location (default: https://localhost/).
    -v, --verbose            Print verbose debugging info to stderr.
-   -x, --extract PATH       Parse JSON to only return requested data; may be repeated.
+   -x, --extract PATH       Parse JSON/(X)HTML to only return requested data; may be repeated.
    -X, --exclude PATH       Exclude specified path from JSON data; may be repeated.
 
 API PARAMS
@@ -257,9 +264,10 @@ EXAMPLES:
 
     def parse_args(self, expr, arg_slice=None):
         args = {
-            'api': None,
+            'path': None,
             'verb': None,
             'api_args': {},
+            'basic_auth': None,
             'cmd_args': [],
             'headers': {},
             'data': [],
@@ -320,6 +328,13 @@ EXAMPLES:
                     else:
                         args['stdout_redir'] = part[1:]
                         args['redir_type'] = 'w'
+            elif part == '-B' or part == '--basic':
+                i += 1
+                if i == len(parts):
+                    raise Exception("Missing HTTP basic auth user/pass parameter.")
+                if ':' not in parts[i]:
+                    raise Exception("Expected HTTP basic auth in format 'user:pass'.")
+                args['basic_auth'] = parts[i]
             elif part == '-F' or part == '--file':
                 i += 1
                 if i == len(parts):
@@ -421,9 +436,9 @@ EXAMPLES:
                     # process any aliases
                     if args['verb'] in self.method_aliases:
                         args['verb'] = self.method_aliases[args['verb']]
-                elif args['verb'] in self.http_methods and args['api'] is None:
+                elif args['verb'] in self.http_methods and args['path'] is None:
                     # collect the API -- unless this is a internal command
-                    args['api'] = util.pretty_path(self.parse_path(part), False, False)
+                    args['path'] = util.pretty_path(self.parse_path(part), False, False)
                 else:
                     # anything else is a parameter
                     if args['verb'] in self.http_methods:
@@ -437,6 +452,13 @@ EXAMPLES:
         return args
 
     def parse_cmd(self, cli_cmd):
+        '''
+        Parse a shell command to either run an internal command or perform an HTTP request. Returns True if a command was successfully parsed, false if the user wants to quit, or throws an exception with a syntax or run-time/request error.
+
+        Commands/requests are executed using the current environment and/or base arguments.
+
+        By default, responses are printed to standard-out based on the run-time parameters. Output can be piped to write/append files like a normal shell (e.g. if using inside the rest shell).
+        '''
         # collect up the command parts
         args = self.parse_args(cli_cmd)
         # if we got oauth args we need to load in do so
@@ -461,11 +483,12 @@ EXAMPLES:
                 args['api_args'].update(self.env('vars'))
                 answer = self.client.request(
                     method=args['verb'],
-                    api=args['api'],
+                    path=args['path'],
                     params=args['api_args'],
                     query=args['query'],
                     headers=args['headers'],
                     verbose=args['verbose'],
+                    basic_auth=args['basic_auth'],
                     full=True
                 )
                 response = answer.decoded
@@ -499,7 +522,7 @@ EXAMPLES:
         else:
             # run an internal command
             try:
-                return self.run_cmd(args['verb'], args['cmd_args'], args)
+                return self.run_cmd(args['verb'], args['cmd_args'])
             except Exception as e:
                 response_status = 'Syntax Error'
                 response = e.message
@@ -584,12 +607,17 @@ EXAMPLES:
                 else:
                     if isinstance(response, basestring):
                         if args.get('formatted'):
-                            max_bytes = min(len(response), 256)
-                            print response[0:max_bytes]
-                            sys.stderr.write(
-                                '# %d/%d bytes, use --raw|-r to see full output\n'
-                                % (max_bytes, len(response))
-                            )
+                            chars_to_print = min(len(response), 256)
+                            sys.stderr.write('# %d/%d chars%s\n' % (
+                                chars_to_print,
+                                len(response),
+                                (
+                                    ", use --raw|-r to see full output"
+                                    if chars_to_print < len(response)
+                                    else ""
+                                )
+                            ))
+                            print response[0:chars_to_print]
                         else:
                             print response
                     else:
@@ -603,9 +631,18 @@ EXAMPLES:
                             print json.dumps(response, indent=4, sort_keys=True)
         else:
             if isinstance(response, basestring):
-                sys.stderr.write('! %s:\n%s\n' % (
-                    status, response
-                ))
+                if args['formatted']:
+                    chars_to_print = min(len(response), 256)
+                    sys.stderr.write('! %s (%d/%d chars)\n:%s\n' % (
+                        status,
+                        chars_to_print,
+                        len(response),
+                        response[0:chars_to_print]
+                    ))
+                else:
+                    sys.stderr.write('! %s:\n%s\n' % (
+                        status, response
+                    ))
             else:
                 sys.stderr.write('! %s:\n' % (status))
                 if args.get('formatted'):
@@ -618,6 +655,7 @@ EXAMPLES:
                     print json.dumps(response, indent=4, sort_keys=True)
 
     def env(self, key, value=None):
+        '''Fetch or set a value from the environment.'''
         key = key.lower()
         if key in self._env:
             if value is None:
@@ -630,6 +668,20 @@ EXAMPLES:
                 return value
 
     def parse_param(self, str, params={}):
+        '''
+        Parse a CLI parameter, optionally merging it with existing passed parameters.
+
+        Parameter encoding:
+
+            'foo', '!foo' 
+                Bare word are treated as boolean values. True by default, false if starting with an exclaimation point.
+
+            'foo=bar', 'foo=0', 'foo.bar=42'
+                Assign the string value to the key specified. If the key contains dots than objects will be created automatically.
+
+            'foo:=3', 'foo.bar:=["a", "b", "c"]'
+                Assign the JSON-encoded values to the key specified.
+        '''
         param_parts = str.split('=', 1)
         param = param_parts[0]
         # no value given? treat it as a boolean
@@ -667,6 +719,7 @@ EXAMPLES:
         return params
 
     def parse_path(self, path=''):
+        '''Returns a path that may contain relative references (e.g. "../foo") based on our current path.'''
         # no path? go to our last working dir
         if not len(path) or path == '-':
             return self._env['last_cwd']
@@ -696,11 +749,10 @@ EXAMPLES:
             final_path = final_path + '/'
         return final_path
 
-    def run_cmd(self, cmd, params=None, args=None):
+    def run_cmd(self, cmd, params=None):
+        '''Run a command using the specified parameters.'''
         if params is None:
             params = []
-        if args is None:
-            args = {}
         if cmd == 'set':
             # break the array into the parts
             for str in params:

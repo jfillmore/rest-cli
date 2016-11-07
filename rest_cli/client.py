@@ -1,9 +1,18 @@
 #!/usr/bin/python -tt
 
 
-"""Client for talking to a RESTful API server."""
+"""Client for talking to a RESTful server. Maybe just even a regular web server."""
 
 from collections import namedtuple
+import Cookie
+import base64
+import dbg
+import hashlib
+import os
+import re
+import socket
+import sys
+import time
 import urllib
 import urlparse
 try:
@@ -11,24 +20,16 @@ try:
 except:
     import simplejson
     json = simplejson
-import Cookie
-import re
-import sys
-import dbg
-import os
-import base64
-import hashlib
-import socket
-import time
 
 from restkit import Resource, OAuthFilter
-import restkit.oauth2 as oauth
 from restkit.errors import (
     RequestError,
     RequestFailed,
     ResourceNotFound,
     Unauthorized
 )
+import restkit.oauth2 as oauth
+from restkit import BasicAuth
 
 import util
 
@@ -54,13 +55,59 @@ class RESTClient:
         # if set, an oauth authentication header will be included in each request
         self.oauth = None
         self.set_url(url)
-        # TODO: python 2.7 supports an order tuple object we can use to
-        # preserve order :)
+        # TODO: python 2.7 supports an order tuple object we can use to preserve order :)
         self.encode = json.JSONEncoder().encode
         self.decode = json.JSONDecoder().decode
 
+    def _prep_request(self, api_url, basic_auth=None):
+        filters = []
+        if self.oauth:
+            consumer = oauth.Consumer(
+                key=self.oauth['consumer_key'],
+                secret=self.oauth['consumer_secret']
+            )
+            token = oauth.Token(
+                key=self.oauth['token'],
+                secret=self.oauth['token_secret']
+            )
+            oauth_filter = OAuthFilter('*', consumer, token)
+            filters.append(oauth_filter)
+        elif basic_auth:
+            auth_parts = basic_auth.split(':', 1)
+            filters.append(BasicAuth(auth_parts[0], auth_parts[1]))
+        return Resource(api_url, filters=filters)
+
+    def _build_url(self, path, query):
+        path = util.pretty_path(
+            '/'.join(['', self.url['path'], path]),
+            True,
+            False
+        )
+        port = self.url['port']
+        if port == 80 or port == 443:
+            port = ''
+        else:
+            port = ':' + str(port)
+        url = '%s://%s%s%s' % (
+            self.url['scheme'], self.url['hostname'], port, path
+        )
+        # has the base URL been set to include query params?
+        if self.url['query']:
+            url = self.merge_url_query(url, self.url['query'])
+        # add in manually passed query args
+        if query:
+            url = self.merge_url_query(url, query)
+        # with everything merged into the URL, do a final split
+        if url.find('?') >= 0:
+            (url, query) = url.split('?', 1)
+        else:
+            query = ''
+        # return the full URL, as well as our final query
+        return url, query
+
     def parse_url(self, url):
-        '''Cause urlparse just doesn't do it how I like it'''
+        '''Parses a URL into its components. Allows as little information as possible (e.g. just a port, just a path), defaulting to http://localhost:80/.'''
+        # urlparse just doesn't do it the "right" way...
         # check for protocol and strip it off if found
         parts = {
             'scheme': None,
@@ -90,18 +137,16 @@ class RESTClient:
         if not hostname:
             hostname = 'localhost'
         parts['hostname'] = hostname.lower()
-        # let urlparse do the rest of the work on the path
+        # let urlparse do the rest of the work on the path w/ a fake domain
         parsed = urlparse.urlparse('http://localhost/' + url)
         parts['path'] = parsed.path
         parts['params'] = parsed.params
         parts['query'] = parsed.query
         parts['fragment'] = parsed.fragment
-        # force ourself to end in a slash -- well, maybe not...
-        #if not self.path.endswith('/'):
-        #    self.path = ''.join((self.path, '/'))
         return parts
 
     def set_url(self, url):
+        '''Sets the base URL for requests. Assumes http://localhost by default.'''
         if url == '':
             raise Exception('Invalid API URL: %s.' % url)
         url = self.parse_url(url)
@@ -117,6 +162,7 @@ class RESTClient:
                 self.set_port(80)
 
     def load_oauth(self, creds):
+        '''Sets OAuth keys to be used for each request. Can be set to None to stop using OAuth.'''
         keys = [
             'consumer_key', 'consumer_secret',
             'token', 'token_secret'
@@ -131,153 +177,55 @@ class RESTClient:
             self.oauth = creds
 
     def set_port(self, port):
+        '''Set the port that will be used for requests.'''
         port = int(port)
         if port >= 0 and port <= 65535:
             self.url['port'] = port
         else:
             raise Exception('Invalid API service port: %s.' % port)
 
-    def get(self, api, params, **opts):
-        return self.request('GET', api, params, **opts)
+    def get(self, path, params=None, **opts):
+        '''Perform a GET request with the provided query string parameters. If the base URL and/or path contain query string parameters they will all be merged.'''
+        return self.request('GET', path, params, **opts)
 
-    def post(self, api, params, **opts):
-        return self.request('POST', api, params, **opts)
+    def post(self, path, params=None, **opts):
+        '''Perform a POST request with the supplied parameters as the payload. Defaults to JSON encoding.'''
+        return self.request('POST', path, params, **opts)
 
-    def put(self, api, params, **opts):
-        return self.request('PUT', api, params, **opts)
+    def put(self, path, params=None, **opts):
+        '''Perform a PUT request with the supplied parameters as the payload. Defaults to JSON encoding.'''
+        return self.request('PUT', path, params, **opts)
 
-    def options(self, api, params, **opts):
-        return self.request('OPTIONS', api, params, **opts)
+    def options(self, path, params=None, **opts):
+        '''Perform a OPTIONS request with the supplied parameters as the payload. Defaults to JSON encoding.'''
+        return self.request('OPTIONS', path, params, **opts)
 
-    def delete(self, api, params, **opts):
-        return self.request('DELETE', api, params, **opts)
+    def delete(self, path, params=None, **opts):
+        '''Perform a DELETE request with the supplied parameters as the payload. Defaults to JSON encoding.'''
+        return self.request('DELETE', path, params, **opts)
 
-    def build_query_obj(self, query):
-        obj = urlparse.parse_qs(query)
-        # all objects are lists by default, but it's probably more conventional to flatten single-item arrays
-        new_obj = {}
-        for key in obj:
-            if len(obj[key]) == 1:
-                new_obj[key] = obj[key][0]
-            else:
-                new_obj[key] = obj[key]
-        return new_obj
-
-    def build_query(self, params, topkey=''):
-        '''Mimics the behaviour of http_build_query PHP function'''
-        if len(params) == 0:
-            return ""
-        result = ""
-        # is a dictionary?
-        if type(params) is dict:
-            for key in params.keys():
-                newkey = urllib.quote(key)
-                if topkey != '':
-                    newkey = topkey + urllib.quote('[' + key + ']')
-                if type(params[key]) is dict:
-                    result += self.build_query(params[key], newkey)
-                elif type(params[key]) is list:
-                    i = 0
-                    for val in params[key]:
-                        result += newkey + urllib.quote('[' + str(i) + ']') \
-                            + "=" + urllib.quote(str(val)) + "&"
-                        i = i + 1
-                # boolean should have special treatment as well
-                elif type(params[key]) is bool:
-                    result += newkey + "=" + urllib.quote(str(int(params[key]))) + "&"
-                # assume string (integers and floats work well)
-                else:
-                    result += newkey + "=" + urllib.quote(str(params[key])) + "&"
-        # remove the last '&'
-        if result and topkey == '' and result[-1] == '&':
-            result = result[:-1]
-        return result
-
-    def merge_query(self, query1, query2=None):
-        if not query2:
-            return query1
-        return '&'.join([query1, query2])
-
-    def merge_url_query(self, url, query):
-        if url.find('?') >= 0:
-            url, existing_query = url.split('?', 1)
-            query = self.merge_query(existing_query, query)
-        return '?'.join((url, query)).rstrip('?')
-
-    def get_header(self, headers, header, value=None):
-        for key in headers:
-            if key.lower() == header.lower():
-                if value is None:
-                    return headers[key]
-                else:
-                    return headers[key] == value
-        return None
-
-    def _prep_request(self, api_url):
-        filters = []
-        if self.oauth:
-            consumer = oauth.Consumer(
-                key=self.oauth['consumer_key'],
-                secret=self.oauth['consumer_secret']
-            )
-            token = oauth.Token(
-                key=self.oauth['token'],
-                secret=self.oauth['token_secret']
-            )
-            oauth_filter = OAuthFilter('*', consumer, token)
-            filters.append(oauth_filter)
-        return Resource(api_url, filters=filters)
-
-    def _build_url(self, api, query):
-        path = util.pretty_path(
-            '/'.join(['', self.url['path'], api]),
-            True,
-            False
-        )
-        port = self.url['port']
-        if port == 80 or port == 443:
-            port = ''
-        else:
-            port = ':' + str(port)
-        url = '%s://%s%s%s' % (
-            self.url['scheme'], self.url['hostname'], port, path
-        )
-        # has the base URL been set to include query params?
-        if self.url['query']:
-            url = self.merge_url_query(url, self.url['query'])
-        # add in manually passed query args
-        if query:
-            url = self.merge_url_query(url, query)
-        # with everything merged into the URL, do a final split
-        if url.find('?') >= 0:
-            (url, query) = url.split('?', 1)
-        else:
-            query = ''
-        # return the full URL, as well as our final query
-        return url, query
-
-    def request(self, method, api, params=None, query=None, headers=None,
-                verbose=False, full=False):
+    def request(self, method, path, params=None, query=None, headers=None,
+                verbose=False, full=False, basic_auth=None):
         # normalize the API parameters
         if method is None or method == '':
             method = 'get'
         method = method.lower()
-        if api == '' or api is None:
-            api = '/'
+        if path == '' or path is None:
+            path = '/'
         if params is None:
             params = {}
         if type(query) == list:
             query = '&'.join(query)
         elif type(query) == dict:
             query = self.build_query(query)
-        if api.find('?') >= 0:
-            api, api_query = api.split('?', 1)
+        if path.find('?') >= 0:
+            path, api_query = path.split('?', 1)
             # TODO: tests whether query args need to be in the URL or params for oauth signing
             query = self.merge_query(api_query, query)
         # merge in base URL params
-        url, query = self._build_url(api, query)
+        url, query = self._build_url(path, query)
         # trust that reskit will do quoting...
-        resource = self._prep_request(url)
+        resource = self._prep_request(url, basic_auth)
         # prep the rest of the request args
         headers = headers if isinstance(headers, dict) else {}
         # set the header unless we have a content-type already specified
@@ -304,8 +252,8 @@ class RESTClient:
             if self.get_header(headers, 'Content-Type', 'application/json'):
                 payload = self.encode(params)
             else:
-                # not sure >how< to encode, so good 'nuff for now
-                payload = urllib.urlencode(params)
+                # TODO/FIXME default to form post?
+                raise Exception("Non-JSON payloads implemented.");
             request_args['payload'] = payload
         # fire away!
         if verbose:
@@ -357,13 +305,79 @@ class RESTClient:
         if response.meta.status_int < 200 or response.meta.status_int >= 400:
             raise APIException(
                 '"%s %s" failed (%s)' % (
-                    method.upper(), api, response.meta.status
+                    method.upper(), path, response.meta.status
                 ),
                 response,
             )
         if full:
             return response
         return decoded
+
+    def build_query_obj(self, query):
+        '''Translates a query string into an object. If multiple keys are used the values will be contained in an array.'''
+        obj = urlparse.parse_qs(query)
+        # all objects are lists by default, but it's probably more conventional to flatten single-item arrays
+        new_obj = {}
+        for key in obj:
+            if len(obj[key]) == 1:
+                new_obj[key] = obj[key][0]
+            else:
+                new_obj[key] = obj[key]
+        return new_obj
+
+    def build_query(self, params, topkey=''):
+        '''Mimics the behaviour of http_build_query PHP function (e.g. arrays will be encoded as foo[0]=bar, booleans as 0/1).'''
+        if len(params) == 0:
+            return ""
+        result = ""
+        # is a dictionary?
+        if type(params) is dict:
+            for key in params.keys():
+                newkey = urllib.quote(key)
+                if topkey != '':
+                    newkey = topkey + urllib.quote('[' + key + ']')
+                if type(params[key]) is dict:
+                    result += self.build_query(params[key], newkey)
+                elif type(params[key]) is list:
+                    i = 0
+                    for val in params[key]:
+                        result += newkey + urllib.quote('[' + str(i) + ']') \
+                            + "=" + urllib.quote(str(val)) + "&"
+                        i = i + 1
+                # boolean should have special treatment as well
+                elif type(params[key]) is bool:
+                    result += newkey + "=" + urllib.quote(str(int(params[key]))) + "&"
+                # assume string (integers and floats work well)
+                else:
+                    result += newkey + "=" + urllib.quote(str(params[key])) + "&"
+        # remove the last '&'
+        if result and topkey == '' and result[-1] == '&':
+            result = result[:-1]
+        return result
+
+    def merge_query(self, query1, query2=None):
+        '''Merge two query strings together. Neither query string should contain the '?' delimiter.'''
+        if not query2:
+            return query1
+        return '&'.join([query1, query2])
+
+    def merge_url_query(self, url, query):
+        '''Update a URL to add or append a query string.'''
+        if url.find('?') >= 0:
+            url, existing_query = url.split('?', 1)
+            query = self.merge_query(existing_query, query)
+        return '?'.join((url, query)).rstrip('?')
+
+    def get_header(self, headers, header, value=None):
+        '''Read a header from the given list (ignoring case) and return the value. Returns None if not found, or optionally the value given.'''
+        for key in headers:
+            if key.lower() == header.lower():
+                if value is None:
+                    return headers[key]
+                else:
+                    return headers[key] == value
+        return None
+
 
 if __name__ == '__main__':
     dbg.pretty_print(RESTClient())
