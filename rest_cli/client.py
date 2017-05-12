@@ -263,9 +263,11 @@ class RESTClient:
         else:
             if self.get_header(headers, 'Content-Type', 'application/json'):
                 payload = self.encode(params)
+            elif self.get_header(headers, 'Content-Type', 'application/x-www-form-urlencoded'):
+                payload = urllib.urlencode(params)
             else:
-                # TODO/FIXME default to form post?
-                raise Exception("Non-JSON payloads implemented.");
+                # assume its already been encoded
+                payload = params
             request_args['payload'] = payload
         # fire away!
         if verbose:
@@ -325,9 +327,9 @@ class RESTClient:
             return response
         return decoded
 
-    def build_query_obj(self, query):
+    def build_query_obj(self, query, keep_blanks=True):
         '''Translates a query string into an object. If multiple keys are used the values will be contained in an array.'''
-        obj = urlparse.parse_qs(query)
+        obj = urlparse.parse_qs(query, keep_blank_values=keep_blanks)
         # all objects are lists by default, but it's probably more conventional to flatten single-item arrays
         new_obj = {}
         for key in obj:
