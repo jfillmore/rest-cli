@@ -218,6 +218,7 @@ class RESTClient:
 
     def request(self, method, path, params=None, query=None, headers=None,
                 verbose=False, full=False, basic_auth=None, pre_formatted=None):
+        # TODO: handle sending params as the body/payload for GET requests (e.g. ElasticSearch APIs use this)
         # normalize the API parameters
         if method is None or method == '':
             method = 'get'
@@ -230,13 +231,12 @@ class RESTClient:
             query = '&'.join(query)
         elif type(query) == dict:
             query = self.build_query(query)
-        if path.find('?') >= 0:
-            path, api_query = path.split('?', 1)
-            # TODO: tests whether query args need to be in the URL or params for oauth signing
-            query = self.merge_query(api_query, query)
+        if method == 'get' and params:
+            query = self.merge_query(self.build_query(params), query)
         # merge in base URL params
         url, query = self._build_url(path, query)
-        # trust that reskit will do quoting...
+        if query:
+            url = '?'.join([url, query])
         resource = self._prep_request(url, basic_auth)
         # prep the rest of the request args
         headers = headers if isinstance(headers, dict) else {}
@@ -253,12 +253,6 @@ class RESTClient:
         for name in self.cookies:
             request_args['headers'].append(('Cookie', '='.join([name, self.cookies[name]])))
         if method == 'get':
-            # convert the query to an obj for final use
-            query_obj = self.build_query_obj(query)
-            if params:
-                query_obj.update(params)
-            if query_obj:
-                request_args['params_dict'] = query_obj
             payload = ''
         else:
             if pre_formatted:
@@ -373,9 +367,13 @@ class RESTClient:
         return result
 
     def merge_query(self, query1, query2=None):
-        '''Merge two query strings together. Neither query string should contain the '?' delimiter.'''
+        '''Merge two query strings together. Discards any leading '?' characters.'''
+        if query1.startswith('?'):
+            query1 = query1[1:]
         if not query2:
             return query1
+        elif query2.startswith('?'):
+            query2 = query2[1:]
         return '&'.join([query1, query2])
 
     def merge_url_query(self, url, query):
