@@ -217,7 +217,7 @@ class RESTClient:
         return self.request('DELETE', path, params, **opts)
 
     def request(self, method, path, params=None, query=None, headers=None,
-                verbose=False, full=False, basic_auth=None):
+                verbose=False, full=False, basic_auth=None, pre_formatted=None):
         # normalize the API parameters
         if method is None or method == '':
             method = 'get'
@@ -261,13 +261,16 @@ class RESTClient:
                 request_args['params_dict'] = query_obj
             payload = ''
         else:
-            if self.get_header(headers, 'Content-Type', 'application/json'):
-                payload = self.encode(params)
-            elif self.get_header(headers, 'Content-Type', 'application/x-www-form-urlencoded'):
-                payload = urllib.urlencode(params)
-            else:
-                # assume its already been encoded
+            if pre_formatted:
                 payload = params
+            else:
+                if self.get_header(headers, 'Content-Type', 'application/json'):
+                    payload = self.encode(params)
+                elif self.get_header(headers, 'Content-Type', 'application/x-www-form-urlencoded'):
+                    payload = urllib.urlencode(params)
+                else:
+                    # assume its already been encoded
+                    payload = params
             request_args['payload'] = payload
         # fire away!
         if verbose:
