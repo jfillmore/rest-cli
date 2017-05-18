@@ -51,7 +51,7 @@ class RESTClient:
 
     """Client for talking to a RESTful server."""
 
-    def __init__(self, url='localhost'):
+    def __init__(self, url='localhost', use_proxy=False):
         # the base URL information for construction API requests
         self.url = None
         self.cookies = {}  # session cookie cache
@@ -59,6 +59,8 @@ class RESTClient:
         self.oauth = None
         self.basic_auth = None
         self.set_url(url)
+        # if true we'll use the OS environ variables 'http(s)_proxy' for requests
+        self.use_proxy = use_proxy
         # TODO: python 2.7 supports an order tuple object we can use to preserve order :)
         self.encode = json.JSONEncoder().encode
         self.decode = json.JSONDecoder().decode
@@ -81,7 +83,7 @@ class RESTClient:
             filters.append(BasicAuth(auth_parts[0], auth_parts[1]))
         elif self.basic_auth:
             filters.append(BasicAuth(self.basic_auth['username'], self.basic_auth['password']))
-        return Resource(api_url, filters=filters)
+        return Resource(api_url, filters=filters, use_proxy=self.use_proxy)
 
     def _build_url(self, path, query):
         path = util.pretty_path(
