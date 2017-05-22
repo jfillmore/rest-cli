@@ -190,6 +190,7 @@ HTTP OPTIONS (each may be specified multiple times)
 
 OTHER OPTIONS (may also be set via 'set' command)
    -B, --basic USER:PASS    HTTP basic authentication.
+   -c, --color              Color formatted JSON responses (default=True).
    -C, --no-color           Do not color formatted JSON responses.
    -h, --help               This information.
    -I, --invert             Invert colors in formatted JSON responses.
@@ -358,6 +359,8 @@ EXAMPLES:
                 args['query'].append(parts[i])
             elif part == '-i' or part == '--invert':
                 args['invert_color'] = True
+            elif part == '-c' or part == '--color':
+                args['color'] = True
             elif part == '-C' or part == '--no-color':
                 args['color'] = False
             elif part == '-v' or part == '--verbose':

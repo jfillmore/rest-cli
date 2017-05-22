@@ -213,12 +213,15 @@ def pretty_print(obj, depth=0, color=True, indent_char=' ', indent_size=4, strea
     """Pretty-prints the contents of the list, tupple, sequence, etc."""
     output = obj2str(obj, depth, color, indent_char, indent_size, inline=True, invert_color=invert_color)
     try:
-        output = output.encode(sys.stdout.encoding, 'replace')
-    except:
+        output = output.encode(sys.stdout.encoding if sys.stdout.encoding else 'utf-8', 'ignore')
+    except Exception as e:
         pass
     if not output.endswith("\n"):
         output = output + "\n"
-    stream.write(output)
+    try:
+        stream.write(output)
+    except:
+        pass
 
 pp = pretty_print
 

@@ -326,7 +326,8 @@ class RESTClient:
             return response
         return decoded
 
-    def build_query_obj(self, query, keep_blanks=True):
+    @classmethod
+    def build_query_obj(cls, query, keep_blanks=True):
         '''Translates a query string into an object. If multiple keys are used the values will be contained in an array.'''
         obj = urlparse.parse_qs(query, keep_blank_values=keep_blanks)
         # all objects are lists by default, but it's probably more conventional to flatten single-item arrays
@@ -338,7 +339,8 @@ class RESTClient:
                 new_obj[key] = obj[key]
         return new_obj
 
-    def build_query(self, params, topkey=''):
+    @classmethod
+    def build_query(cls, params, topkey=''):
         '''Mimics the behaviour of http_build_query PHP function (e.g. arrays will be encoded as foo[0]=bar, booleans as 0/1).'''
         if len(params) == 0:
             return ""
@@ -350,7 +352,7 @@ class RESTClient:
                 if topkey != '':
                     newkey = topkey + urllib.quote('[' + key + ']')
                 if type(params[key]) is dict:
-                    result += self.build_query(params[key], newkey)
+                    result += cls.build_query(params[key], newkey)
                 elif type(params[key]) is list:
                     i = 0
                     for val in params[key]:
@@ -368,7 +370,8 @@ class RESTClient:
             result = result[:-1]
         return result
 
-    def merge_query(self, query1, query2=None):
+    @classmethod
+    def merge_query(cls, query1, query2=None):
         '''Merge two query strings together. Discards any leading '?' characters.'''
         if query1.startswith('?'):
             query1 = query1[1:]
@@ -378,14 +381,16 @@ class RESTClient:
             query2 = query2[1:]
         return '&'.join([query1, query2])
 
-    def merge_url_query(self, url, query):
+    @classmethod
+    def merge_url_query(cls, url, query):
         '''Update a URL to add or append a query string.'''
         if url.find('?') >= 0:
             url, existing_query = url.split('?', 1)
-            query = self.merge_query(existing_query, query)
+            query = cls.merge_query(existing_query, query)
         return '?'.join((url, query)).rstrip('?')
 
-    def get_header(self, headers, header, value=None):
+    @classmethod
+    def get_header(cls, headers, header, value=None):
         '''Read a header from the given list (ignoring case) and return the value. Returns None if not found, or optionally the value given.'''
         for key in headers:
             if key.lower() == header.lower():
