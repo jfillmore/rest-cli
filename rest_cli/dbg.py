@@ -117,7 +117,7 @@ def obj2str(obj, depth=0, color=True, indent_char=' ', indent_size=4, inline=Tru
         # see what we've got and recurse as needed
         if obj_info['type'] == 'list':
             if not len(obj):
-                dump += shell_color(' (empty)', palette['object']) + '\n'
+                dump += shell_color(' []', palette['object']) + '\n'
             else:
                 skip_next_indent = True
                 for i in range(0, len(obj)):
@@ -140,7 +140,7 @@ def obj2str(obj, depth=0, color=True, indent_char=' ', indent_size=4, inline=Tru
                         dump += rdump(item, 1, 1)
         elif obj_info['type'] == 'dict':
             if not len(obj):
-                dump += shell_color(' (empty)', palette['object']) + '\n'
+                dump += shell_color(' {}', palette['object']) + '\n'
             else:
                 skip_next_indent = True
                 for key in obj:
@@ -167,7 +167,7 @@ def obj2str(obj, depth=0, color=True, indent_char=' ', indent_size=4, inline=Tru
                         dump += rdump(item, 1, 1)
         elif obj_info['type'] == 'tuple':
             if not len(obj):
-                dump += shell_color(' (empty)', palette['object'])
+                dump += shell_color(' ()', palette['object'])
             else:
                 dump += shell_color('(', palette['bullet'])
                 dump += ', '.join([unicode(item)[0:32] for item in obj if item != ()])
