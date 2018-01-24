@@ -140,7 +140,7 @@ def obj2str(obj, depth=0, color=True, indent_char=' ', indent_size=4, inline=Tru
                         dump += rdump(item, 1, 1)
         elif obj_info['type'] == 'dict':
             if not len(obj):
-                dump += shell_color(' (empty)', palette['object'])
+                dump += shell_color(' (empty)', palette['object']) + '\n'
             else:
                 skip_next_indent = True
                 for key in obj:
