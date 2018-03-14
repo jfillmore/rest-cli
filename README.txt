@@ -1,3 +1,4 @@
+```
 usage: rest-cli http-verb|command API [API_PARAMS] [ARGUMENTS]
 
 ARGUMENTS
@@ -81,4 +82,8 @@ EXAMPLES:
     > post site -j domain=foo.com
     > cd site/foo.com
     > get ./
+```
 
+# Known Bugs
+
+- using '-s' with an API specified doesn't retain initial headers/CWD

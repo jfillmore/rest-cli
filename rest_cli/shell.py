@@ -122,11 +122,11 @@ class Shell(object):
             repeat = False
             while self.parse_cmd(raw_input(self.get_prompt())):
                 pass
-        except KeyboardInterrupt, e:
+        except KeyboardInterrupt as e:
             pass
-        except EOFError, e:
+        except EOFError as e:
             pass
-        except ValueError, e:
+        except ValueError as e:
             sys.stderr.write('! Input error: ' + str(e) + '\n')
             repeat = True
         except Exception as e:

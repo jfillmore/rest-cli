@@ -398,7 +398,7 @@ if __name__ == '__main__':
         results = jsonx(json_data, **opts)
         for result in results:
             print result
-    except Exception, e:
+    except Exception as e:
         sys.stderr.write(e.message + "\n")
         retval = 1
     sys.exit(retval)
