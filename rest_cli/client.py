@@ -206,6 +206,10 @@ class RESTClient:
         '''Perform a POST request with the supplied parameters as the payload. Defaults to JSON encoding.'''
         return self.request('POST', path, params, **opts)
 
+    def patch(self, path, params=None, **opts):
+        '''Perform a PATCH request with the supplied parameters as the payload. Defaults to JSON encoding.'''
+        return self.request('PATCH', path, params, **opts)
+
     def put(self, path, params=None, **opts):
         '''Perform a PUT request with the supplied parameters as the payload. Defaults to JSON encoding.'''
         return self.request('PUT', path, params, **opts)
@@ -283,7 +287,7 @@ class RESTClient:
             if self.cookies:
                 sys.stderr.write('# Request Cookies: %s\n' % str(self.cookies))
         try:
-            response = getattr(resource, method)(**request_args)
+            response = resource.request(method.upper(), **request_args)
             response_data = response.body_string()
         except RequestFailed as e:
             response = e.response
