@@ -13,7 +13,7 @@ setup(
     zip_safe=False,
     install_requires=[
         'restkit==4.2.2',
-        'pyquery'
+        'pyquery==1.4.1'
     ],
     dependency_links=[],
     entry_points={

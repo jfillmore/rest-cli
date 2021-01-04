@@ -1,2 +1,2 @@
 restkit==4.2.2
-pyquery
+pyquery==1.4.1
