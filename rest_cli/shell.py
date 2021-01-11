@@ -1,14 +1,13 @@
 #!/usr/bin/python -tt
 
-"""Shell for interacting with a RESTful server."""
+"""
+Shell for interacting with a RESTful server.
+"""
 
-# TODO:
-# - save last response for replay (e.g. full formatting)
-# - piping for less/etc
 
 from collections import namedtuple
 from traceback import print_exception
-from urllib import quote
+import json
 import os
 import os.path
 import re
@@ -20,19 +19,12 @@ import sys
 # import hacks!
 os.environ['TERM'] = 'linux'
 import readline
-try:
-    import json
-except:
-    import simplejson
-    json = simplejson
 
-from restkit.errors import RequestError
-
-from jsonx import jsonx
-from htmlx import htmlx
-import client
-import dbg
-import util
+from .jsonx import jsonx
+from .htmlx import htmlx
+from . import client
+from . import dbg
+from . import util
 
 
 xml_content_types = [
@@ -49,8 +41,10 @@ class JSONException(Exception):
     pass
 
 
-class Shell(object):
-    """Shell for interacting with REST client."""
+class Shell:
+    """
+    Shell for interacting with REST client.
+    """
     # a list of our internal commands
     http_methods = (
         'get',
@@ -92,17 +86,18 @@ class Shell(object):
         )
         self.main_args = {
             'color': sys.stdout.isatty(),
-            'help': False,
             'formatted': True,
             'headers': {},
-            'verbose': False,
+            'help': False,
+            'insecure': False,
+            'shell': False,
             'url': 'https://localhost:443/',
-            'shell': False
+            'verbose': False,
         }
         self.data_store = {}
         # parse out our initial args
         self.args = self.parse_args(argv, self.main_args)
-        self.client = client.RESTClient(self.args['url'])
+        self.client = client.RESTClient(self.args['url'], self.args['insecure'])
         if self.args['help']:
             return
         # run our initial command, possibly invoking shell mode after
@@ -127,15 +122,15 @@ class Shell(object):
         except EOFError as e:
             pass
         except ValueError as e:
-            sys.stderr.write('! Input error: ' + str(e) + '\n')
+            dbg.log('Input error: ' + str(e) + '\n', symbol='!')
             repeat = True
         except Exception as e:
-            sys.stderr.write('! ' + str(e) + '\n')
+            dbg.log(str(e) + '\n', symbol='!')
             repeat = True
         if repeat:
             self.start(False)
         else:
-            sys.stderr.write('\n')
+            dbg.log('\n')
             self.stop()
             return self.last_rv
 
@@ -176,7 +171,7 @@ class Shell(object):
             raise Exception(''.join(['Invalid editing mode: ', mode, ' Supported modes are: ', ', '.join(modes), '.']))
 
     def print_help(self, shell=False):
-        sys.stderr.write('''usage: rest-cli http-verb|command API [API_PARAMS] [ARGUMENTS]
+        dbg.log("""usage: rest-cli http-verb|command API [API_PARAMS] [ARGUMENTS]
 
 ARGUMENTS
 ---------------------------------------------------------------------------
@@ -194,8 +189,8 @@ OTHER OPTIONS (may also be set via 'set' command)
    -C, --no-color           Do not color formatted JSON responses.
    -h, --help               This information.
    -I, --invert             Invert colors in formatted JSON responses.
+       --insecure           Do not valid SSL certificates (danger!)
    -j, --json STRING        Append JSON-encoded list to API parameters.
-   -O, --oauth CK CS T TS   Authenticate via OAuth using the supplied consumer key, secret, token, and token secret.
    -q, --quiet              Do not print API return response.
    -r, --raw                Don't format response data; return raw response.
    -s, --shell              Shell mode for running multiple APIs within a session.
@@ -209,7 +204,7 @@ API PARAMS
 Dictionaries can be created on demand using dot notation. Multiple params within the same dictionary will merge together. Values are always encoded as strings unless ":=" is used to assign the value.
 
    foo                      {"foo": true}
-   !foo                     {"foo": false}
+   ^foo                     {"foo": false}
    foo=bar                  {"foo": "bar"}
    foo.bar=3 foo.bard=abc   {"foo": {"bar": "3", "bard": "abc"}}
    foo:='{"bar":3}'         {"foo": {"bar": 3}}
@@ -261,38 +256,33 @@ EXAMPLES:
     > cd site/foo.com
     > get ./
 
-''')
+""")
 
     def parse_args(self, expr, arg_slice=None):
         args = {
-            'path': None,
-            'verb': None,
+            'FILES': [],
             'api_args': {},
             'basic_auth': None,
             'cmd_args': [],
-            'headers': {},
-            'data': [],
-            'extract': [],
-            'exclude': [],
-            'invert_color': False,
             'color': self.main_args['color'],
+            'data': [],
+            'exclude': [],
+            'extract': [],
             'formatted': self.main_args['formatted'],
-            'url': self.main_args['url'],
-            'verbose': False,
-            'stdout_redir': None,
+            'headers': {},
+            'help': False,  # user just wanted some help
+            'insecure': False,
+            'invert_color': False,
+            'path': None,
+            'query': [],
             'redir_type': None,
             'shell': False,
-            'query': [],
-            'help': False,  # user just wanted some help
-            'FILES': [],
-            'oauth': {
-                'consumer_key': None,
-                'consumer_secret': None,
-                'token': None,
-                'token_secret': None
-            }
+            'stdout_redir': None,
+            'url': self.main_args['url'],
+            'verb': None,
+            'verbose': False,
         }
-        if isinstance(expr, basestring):
+        if isinstance(expr, str):
             parts = shlex.split(expr)
         else:
             parts = expr  # already a list
@@ -359,6 +349,8 @@ EXAMPLES:
                 args['query'].append(parts[i])
             elif part == '-i' or part == '--invert':
                 args['invert_color'] = True
+            elif part == '--insecure':
+                args['insecure'] = True
             elif part == '-c' or part == '--color':
                 args['color'] = True
             elif part == '-C' or part == '--no-color':
@@ -367,17 +359,6 @@ EXAMPLES:
                 args['verbose'] = True
             elif part == '-f' or part == '--form':
                 args['headers']['content-type'] = 'application/x-www-form-urlencoded'
-            elif part == '-O' or part == '--oauth':
-                # the next 4 parameters are for oauth
-                if i + 4 == len(parts):
-                    raise Exception("Missing one of the following values for --oauth: consumer key, consumer secret, token, token secret.")
-                next_params = [
-                    'consumer_key', 'consumer_secret',
-                    'token', 'token_secret'
-                ]
-                for ctr in range(0, 4):
-                    args['oauth'][next_params[ctr]] = parts[i + ctr + 1]
-                i += 4
             elif part == '-h' or part == '--help':
                 self.print_help()
                 args['help'] = True
@@ -402,10 +383,10 @@ EXAMPLES:
                     else:
                         raise JSONException("JSON values must be a dictionary of arguments.")
                 except JSONException as e:
-                    sys.stderr.write('Invalid JSON:' + e.message)
+                    dbg.log('Invalid JSON:' + e.message)
                     raise e
                 except Exception as e:
-                    sys.stderr.write('Invalid JSON:' + e.message)
+                    dbg.log('Invalid JSON:' + e.message)
                     raise JSONException(e.message)
             elif part == '-r' or part == '--raw':
                 args['formatted'] = False
@@ -455,18 +436,21 @@ EXAMPLES:
         return args
 
     def parse_cmd(self, cli_cmd):
-        '''
-        Parse a shell command to either run an internal command or perform an HTTP request. Returns True if a command was successfully parsed, false if the user wants to quit, or throws an exception with a syntax or run-time/request error.
+        """
+        Parse a shell command to either run an internal command or perform an
+        HTTP request. Returns True if a command was successfully parsed, false
+        if the user wants to quit, or throws an exception with a syntax or
+        run-time/request error.
 
-        Commands/requests are executed using the current environment and/or base arguments.
+        Commands/requests are executed using the current environment and/or
+        base arguments.
 
-        By default, responses are printed to standard-out based on the run-time parameters. Output can be piped to write/append files like a normal shell (e.g. if using inside the rest shell).
-        '''
+        By default, responses are printed to standard-out based on the run-time
+        parameters. Output can be piped to write/append files like a normal
+        shell (e.g. if using inside the rest shell).
+        """
         # collect up the command parts
         args = self.parse_args(cli_cmd)
-        # if we got oauth args we need to load in do so
-        if args['oauth']['consumer_key']:
-            self.client.load_oauth(args['oauth'])
         # not writing to a file by default
         file = None
         # run the command or API
@@ -497,30 +481,23 @@ EXAMPLES:
                 response = answer.decoded
                 response_status = None
                 success = True
-            except client.APIException as e:
+            except client.ApiException as e:
                 success = False
-                response_status = e.message
+                response_status = str(e)
                 response = e.response.decoded
                 answer = e.response
-            except Exception as e:
-                success = False
-                response_status = 'Internal Error'
-                response = e.message
-            except RequestError as e:
-                response = e.message
-                response_status = 'Request Error'
-                success = False
             except socket.error as e:
-                assert False, "Socket errors shouldn't happen anymore..."
+                response_status = str(e)
+                response = None
                 success = False
-                response = unicode(e)
+                answer = None
             self.last_rv = int(not success)
             # prep response redirection, since it worked
             if args['stdout_redir'] is not None:
                 try:
                     file = open(args['stdout_redir'], args['redir_type'])
                 except IOError as e:
-                    sys.stderr.write('! Failed to write response: ' + e + '\n')
+                    dbg.log('Failed to write response: ' + e + '\n', symbol='!')
                     return True
         else:
             # run an internal command
@@ -535,7 +512,7 @@ EXAMPLES:
         # adjust the response object as requested
         if answer and (args['extract'] or args['exclude'] or args['data']):
             # handle HTML vs JSON differently
-            content_type = answer.meta.headers.get('Content-Type')
+            content_type = answer.obj.headers.get('Content-Type')
             to_store = {}
             if content_type.startswith("application/json"):
                 try:
@@ -552,7 +529,7 @@ EXAMPLES:
                         response = response[0]
                 except:
                     (exc_type, exc_msg, exc_tb) = sys.exc_info()
-                    sys.stderr.write('! %s\n' % exc_msg)
+                    dbg.log('%s\n' % exc_msg, symbol='!')
                     return True
             elif any([content_type.startswith(xml_type) for
                       xml_type in xml_content_types]):
@@ -569,7 +546,7 @@ EXAMPLES:
                         response = response[0]
                 except:
                     (exc_type, exc_msg, exc_tb) = sys.exc_info()
-                    sys.stderr.write('! %s\n' % exc_msg)
+                    dbg.log('%s\n' % exc_msg, symbol='!')
                     return True
             # if we ended up storing any data, save it memory, noting any environmentals
             for key in to_store:
@@ -608,10 +585,10 @@ EXAMPLES:
                     args['file'].write(dbg.obj2str(response, color=False))
                     args['file'].close()
                 else:
-                    if isinstance(response, basestring):
+                    if isinstance(response, str):
                         if args.get('formatted'):
                             chars_to_print = min(len(response), 256)
-                            sys.stderr.write('# %d/%d chars%s\n' % (
+                            dbg.log('# %d/%d chars%s\n' % (
                                 chars_to_print,
                                 len(response),
                                 (
@@ -620,9 +597,9 @@ EXAMPLES:
                                     else ""
                                 )
                             ))
-                            print response[0:chars_to_print]
+                            print(response[0:chars_to_print])
                         else:
-                            print response
+                            print(response)
                     else:
                         if args.get('formatted'):
                             dbg.pretty_print(
@@ -631,34 +608,37 @@ EXAMPLES:
                                 invert_color=args.get('invert_color')
                             )
                         else:
-                            print json.dumps(response, indent=4, sort_keys=True)
+                            print(json.dumps(response, indent=4, sort_keys=True))
         else:
-            if isinstance(response, basestring):
+            if isinstance(response, str):
                 if args['formatted']:
                     chars_to_print = min(len(response), 256)
-                    sys.stderr.write('! %s (%d/%d chars)\n:%s\n' % (
+                    dbg.log('%s (%d/%d chars)\n:%s' % (
                         status,
                         chars_to_print,
                         len(response),
                         response[0:chars_to_print]
-                    ))
+                    ), symbol='!')
                 else:
-                    sys.stderr.write('! %s:\n%s\n' % (
+                    dbg.log('%s:\n%s' % (
                         status, response
-                    ))
+                    ), symbol='!')
             else:
-                sys.stderr.write('! %s:\n' % (status))
-                if args.get('formatted'):
-                    dbg.pretty_print(
-                        response,
-                        color=args.get('color'),
-                        invert_color=args.get('invert_color')
-                    )
-                else:
-                    print json.dumps(response, indent=4, sort_keys=True)
+                dbg.log('%s:' % (status), symbol='!', color='31')
+                if response is not None:
+                    if args.get('formatted'):
+                        dbg.pretty_print(
+                            response,
+                            color=args.get('color'),
+                            invert_color=args.get('invert_color')
+                        )
+                    else:
+                        print(json.dumps(response, indent=4, sort_keys=True))
 
     def env(self, key, value=None):
-        '''Fetch or set a value from the environment.'''
+        """
+        Fetch or set a value from the environment.
+        """
         key = key.lower()
         if key in self._env:
             if value is None:
@@ -671,29 +651,32 @@ EXAMPLES:
                 return value
 
     def parse_param(self, str, params={}):
-        '''
-        Parse a CLI parameter, optionally merging it with existing passed parameters.
+        """
+        Parse a CLI parameter, optionally merging it with existing passed
+        parameters.
 
         Parameter encoding:
 
-            'foo', '!foo' 
-                Bare word are treated as boolean values. True by default, false if starting with an exclaimation point.
+        'foo', '!foo' 
+            Bare word are treated as boolean values. True by default, false if
+            starting with an exclaimation point.
 
-            'foo=bar', 'foo=0', 'foo.bar=42'
-                Assign the string value to the key specified. If the key contains dots than objects will be created automatically.
+        'foo=bar', 'foo=0', 'foo.bar=42'
+            Assign the string value to the key specified. If the key contains
+            dots than objects will be created automatically.
 
-            'foo:=3', 'foo.bar:=["a", "b", "c"]'
-                Assign the JSON-encoded values to the key specified.
-        '''
+        'foo:=3', 'foo.bar:=["a", "b", "c"]'
+            Assign the JSON-encoded values to the key specified.
+        """
         param_parts = str.split('=', 1)
         param = param_parts[0]
         # no value given? treat it as a boolean
         if len(param_parts) == 1:
-            if param.startswith('!'):
+            if param.startswith('^'):
                 value = False
             else:
                 value = True
-            param = param.lstrip('!')
+            param = param.lstrip('^')
         else:
             value = param_parts.pop()
             # check to see if we have a JSON value or are fetching from memory
@@ -722,7 +705,10 @@ EXAMPLES:
         return params
 
     def parse_path(self, path=''):
-        '''Returns a path that may contain relative references (e.g. "../foo") based on our current path.'''
+        """
+        Returns a path that may contain relative references (e.g.  "../foo")
+        based on our current path.
+        """
         # no path? go to our last working dir
         if not len(path) or path == '-':
             return self._env['last_cwd']
@@ -753,7 +739,9 @@ EXAMPLES:
         return final_path
 
     def run_cmd(self, cmd, params=None):
-        '''Run a command using the specified parameters.'''
+        """
+        Run a command using the specified parameters.
+        """
         if params is None:
             params = []
         if cmd == 'set':

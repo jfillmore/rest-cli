@@ -2,21 +2,16 @@ import subprocess
 
 
 def find_subclasses(cls):
-    '''
-    Find all subclasses of given class
-   cls - Any class whose subclass to be found
-    '''
-    subclasses = None
-    try:
-        subclasses = cls.__subclasses__()
-        for d in list(subclasses):
-            subclasses.extend(find_subclasses(d))
-    except:
-        pass
-    return subclasses
+    """
+    Recursively find all subclasses of given class cls.
+    """
+    subclasses = cls.__subclasses__()
+    for subclass in list(subclasses):
+        subclasses.extend(find_subclasses(subclass))
+    return list(set(subclasses))
 
 
-class OutputFormatter(object):
+class OutputFormatter:
     terminal = False
 
     def __init__(self, text):
@@ -26,19 +21,19 @@ class OutputFormatter(object):
             self.lines = text.splitlines()
 
     def __getattr__(self, name):
-        klass = self.__class__
-        klasses = []
+        cls = self.__class__
+        cls = []
         if self.terminal:
             raise Exception('Unable to chain formatter "%s"; "%s" is terminal' % (
-                name, klass.__name__.lower()
+                name, cls.__name__.lower()
             ))
-        while klass is not OutputFormatter:
-            [klasses.append(kls) for kls in klass.__bases__]
-            if klasses:
-                klass = klasses.pop()
+        while cls is not OutputFormatter:
+            [cls.append(kls) for kls in cls.__bases__]
+            if cls:
+                cls = cls.pop()
             else:
                 raise Exception("I'm lost and failed to find myself somehow.")
-        for formatter in find_subclasses(klass):
+        for formatter in find_subclasses(cls):
             if formatter.__name__.lower() == name.lower():
                 return formatter(self.lines[:])
         raise KeyError('formatter not found: %s' % name)
@@ -81,13 +76,13 @@ class Tail(Head):
 if __name__ == '__main__':
     # testing...
     data = '1a\n2b\n3c\n4d\n5e\n6f\n7g\n8h\n9i\n10j\n11k\n'
-    print '* first 3 lines'
+    print('* first 3 lines')
     outf = OutputFormatter(data)
-    print outf.head(3)
-    print '* 3rd line'
-    print Head(data)(3).tail(1)
-    print '* last 3 lines'
-    print outf.tail(3)
-    print '* 3rd to last lines'
-    print Tail(data)(3).head(1)
-    print outf.less()
+    print(outf.head(3))
+    print('* 3rd line')
+    print(Head(data)(3).tail(1))
+    print('* last 3 lines')
+    print(outf.tail(3))
+    print('* 3rd to last lines')
+    print(Tail(data)(3).head(1))
+    print(outf.less())

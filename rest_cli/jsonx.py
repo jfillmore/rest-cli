@@ -7,22 +7,19 @@
 #   * filter (or include) results based on values (e.g. "-f 'foo/id >= 3'")
 #   * verbose debugging to troubleshoot filtering/extraction
 
-import sys
-import re
 import collections
-try:
-    import json
-except:
-    import simplejson
-    json = simplejson
-
+import json
+import re
+import sys
 
 def usage():
-    sys.stdout.write('''usage: json [ARGS] [JSON_FILE]
+    sys.stdout.write("""usage: jsonx [ARGS] [JSON_FILE]
 
-Pretty prints JSON by default. If a file is given it will be read for JSON data; otherwise STDIN will be read instead.
+Pretty prints JSON by default. If a file is given it will be read for JSON
+data; otherwise STDIN will be read instead.
 
 ARGUMENTS:
+
    -p|--pairs            Convert to name=value for easy variable assignment.
    -h|--help             This information.
    -q|--quiet            If a path cannot be extracted/followed quiety ignore it.
@@ -37,33 +34,38 @@ ARGUMENTS:
    -i|--indent INDENT    Indent JSON formatted output with spaces (default: 4).
 
 PATHS
-    The JSON data can be filtered based on index, key matches, ranges, etc. The JSON object is mapped to a directory-like structure (e.g. '/dict/dict_key', '/array/0') syntax with some extra tricks. The field separator between path parts can be changed with the -F|--fs option.
 
-    Arrays:
-        By Index:
-         - 'foo/0', 'foo/2', 'foo/-1' (last item)
-        By Range:
-         - 'foo/:' or 'foo/*' (all items within the array),
-         - 'foo/2:', 'foo/:2', 'foo/1:5', 'foo/-2:' (last 2),
-         - 'foo/:-2' (all but last two),
-         - 'foo/1:-3' (between first and up until 3rd to last)
-    Dictionaries:
-        Regular Expressions:
-         - 'foo/b..?r' = foo/bar, foo/beer
-         - 'foo/bar/.*[pP]assw(or)?d' == anything within foo/bar that looks like a password
-    General:
-        - the root slash on paths is optional (e.g. 'foo/bar' == '/foo/bar')
+The JSON data can be filtered based on index, key matches, ranges, etc. The
+JSON object is mapped to a directory-like structure (e.g. '/dict/dict_key',
+'/array/0') syntax with some extra tricks. The field separator between path
+parts can be changed with the -F|--fs option.
 
-examples:
-    > json='{"id": 3, "name: "bob", "lols": {"a": 1, "b": 2}}'
-    > echo "$json" | json -x id -x lols -x lols/b -i 0
-    3
-    {"a": 1, "b": 2}
-    2
-    > echo "$json" | json -p -x lols/\*
-    lols_a=3
-    lols_b=3
-''')
+Arrays:
+    By Index:
+     - 'foo/0', 'foo/2', 'foo/-1' (last item)
+    By Range:
+     - 'foo/:' or 'foo/*' (all items within the array),
+     - 'foo/2:', 'foo/:2', 'foo/1:5', 'foo/-2:' (last 2),
+     - 'foo/:-2' (all but last two),
+     - 'foo/1:-3' (between first and up until 3rd to last)
+Dictionaries:
+    Regular Expressions:
+     - 'foo/b..?r' = foo/bar, foo/beer
+     - 'foo/bar/.*[pP]assw(or)?d' == anything within foo/bar that looks like a password
+General:
+    - the root slash on paths is optional (e.g. 'foo/bar' == '/foo/bar')
+
+EXAMPLES:
+
+> json='{"id": 3, "name: "bob", "lols": {"a": 1, "b": 2}}'
+> echo "$json" | json -x id -x lols -x lols/b -i 0
+3
+{"a": 1, "b": 2}
+2
+> echo "$json" | json -p -x lols/\*
+lols_a=3
+lols_b=3
+""")
 
 
 def get_opts(defaults, argv):
@@ -147,7 +149,9 @@ def dump_obj(obj, max_len=48):
 
 
 def parse_keys(obj, path, quiet=False):
-    """Return the keys that we which to decend into based on the path."""
+    """
+    Return the keys that we which to decend into based on the path.
+    """
     keys = []
     try:
         objlen = len(obj)
@@ -218,7 +222,9 @@ def print_obj(obj):
 
 
 def exclude_path(obj, path, separator='/', prefix='', quiet=False, debug=False):
-    """Exclude values from an object based on a path."""
+    """
+    Exclude values from an object based on a path.
+    """
     # break the path into parts
     path_parts = path.split(separator)
     # keep track of the values we've collected
@@ -252,7 +258,6 @@ def extract_path(obj, path, separator='/', prefix='', quiet=False, debug=False):
     """
     Extract values from an object based on a path.
     """
-
     # break the path into parts
     path_parts = path.split(separator)
     # keep track of the values we've collected
@@ -283,10 +288,12 @@ def extract_path(obj, path, separator='/', prefix='', quiet=False, debug=False):
     return extracted
 
 
-def jsonx(data, indent=4, pairs=False, sort_keys=True, debug=False,
-          quiet=False, separator='/', extract=None, exclude=None, exists=None,
-          raw=False, data_map=None, data_store=None):
-    if isinstance(data, basestring):
+def jsonx(
+        data, indent=4, pairs=False, sort_keys=True, debug=False, quiet=False,
+        separator='/', extract=None, exclude=None, exists=None, raw=False,
+        data_map=None, data_store=None
+    ):
+    if isinstance(data, str):
         obj = json.JSONDecoder().decode(data)
     else:
         obj = data
@@ -397,73 +404,8 @@ if __name__ == '__main__':
         del opts['json_file']
         results = jsonx(json_data, **opts)
         for result in results:
-            print result
+            print(result)
     except Exception as e:
         sys.stderr.write(e.message + "\n")
         retval = 1
     sys.exit(retval)
-
-
-
-# Needs to handle extract/exclude smarter, e.g.
-# - what does extract/exclude/extract mean? jsonx has a strict flow
-# - if we rtain structure on extraction do arrays get reindexed when affected?
-#
-#_PATH_SEPARATOR = '/'
-#
-#class PathParser(object):
-#
-#    def __init__(self, obj, separator=_PATH_SEPARATOR, quiet=False, debug=False):
-#        self.obj = obj
-#        self.quiet = quiet
-#        self.debug = debug
-#
-#    def exclude(path, separator=_PATH_SEPARATOR, quiet=None, debug=None):
-#        return self._exclude(path, separator=_PATH_SEPARATOR, quiet, debug)
-#
-#    def extract(path, separator=_PATH_SEPARATOR, quiet=None, debug=None):
-#        return self._extract(path, separator=_PATH_SEPARATOR, quiet, debug)
-#
-#    def _exclude(self, path, separator=_PATH_SEPARATOR, quiet=None, debug=None, prefix=''):
-#        if quiet is None:
-#            quiet = self.quiet
-#        if debug is None:
-#            debug = self.debug
-#        return self._traverse(self.obj, path, separator, quiet, debug, prefix, False)
-#
-#    def _extract(self, path, separator=_PATH_SEPARATOR, quiet=None, debug=None, prefix=''):
-#        if quiet is None:
-#            quiet = self.quiet
-#        if debug is None:
-#            debug = self.debug
-#        return self._traverse(self.obj, path, separator, quiet, debug, prefix, True)
-#
-#    def _traverse(self, obj, path, quiet, debug, prefix, prune=None):
-#        # break the path into parts
-#        path_parts = path.split(separator)
-#        floating = [part for part in path_parts if part.startswith(
-#        # keep track of the values we've collected
-#        excluded = []
-#        if prefix:
-#            prefix = prefix + separator
-#        for key in parse_keys(obj, path_parts[0], quiet):
-#            # try to get the value or next branch
-#            try:
-#                obj_ptr = obj[key]
-#            except:
-#                if not quiet:
-#                    raise Exception("Invalid key '%s' not found in object '%s'." % (key, dump_obj(obj)))
-#                continue
-#            # our current path thus far
-#            subpath = prefix + str(key)
-#            # at the end of our path? we've got what we want here
-#            if len(path_parts) == 1:
-#                del obj[key]
-#            else:
-#                self._traverse(
-#                    value,
-#                    separator.join(path_parts[1:]),
-#                    separator,
-#                    subpath,
-#                    quiet
-#                )

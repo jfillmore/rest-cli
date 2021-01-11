@@ -1,6 +1,6 @@
 from setuptools import setup, find_packages
 
-VERSION = '0.1.1'
+VERSION = '0.2.0'
 
 setup(
     name='rest_cli',
@@ -15,6 +15,7 @@ setup(
         'restkit==4.2.2',
         'pyquery==1.4.1'
     ],
+    python_requires='>=3.6',
     dependency_links=[],
     entry_points={
     },

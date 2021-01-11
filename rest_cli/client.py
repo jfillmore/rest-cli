@@ -4,54 +4,39 @@
 # - JSON body for GET requests
 
 
-"""Client for talking to a RESTful server. Maybe just even a regular web server."""
+"""
+Client for talking to a RESTful server. Maybe just even a regular web server.
+"""
 
 from collections import namedtuple
-import Cookie
 import base64
-import dbg
-import hashlib
-import os
+import http.cookies
+import json
 import re
-import socket
+import ssl
 import sys
 import time
 import urllib
-import urlparse
-try:
-    import json
-except:
-    import simplejson
-    json = simplejson
 
-from restkit import Resource, OAuthFilter
-from restkit.errors import (
-    RequestError,
-    RequestFailed,
-    ResourceNotFound,
-    Unauthorized
-)
-import restkit.oauth2 as oauth
-from restkit import BasicAuth
-
-import util
+from . import dbg
+from . import util
 
 
-Response = namedtuple('Response', ['meta', 'decoded', 'raw'])
+Response = namedtuple('Response', ['obj', 'decoded', 'data'])
 
 
-class APIException(Exception):
-
+class ApiException(Exception):
     def __init__(self, error, response):
         self.response = response
-        super(APIException, self).__init__(error)
+        super().__init__(error)
 
 
 class RESTClient:
+    """
+    Client for talking to a RESTful server.
+    """
 
-    """Client for talking to a RESTful server."""
-
-    def __init__(self, url='localhost', use_proxy=False):
+    def __init__(self, url='localhost', insecure=False):
         # the base URL information for construction API requests
         self.url = None
         self.cookies = {}  # session cookie cache
@@ -59,31 +44,10 @@ class RESTClient:
         self.oauth = None
         self.basic_auth = None
         self.set_url(url)
-        # if true we'll use the OS environ variables 'http(s)_proxy' for requests
-        self.use_proxy = use_proxy
-        # TODO: python 2.7 supports an order tuple object we can use to preserve order :)
-        self.encode = json.JSONEncoder().encode
-        self.decode = json.JSONDecoder().decode
-
-    def _prep_request(self, api_url, basic_auth=None):
-        filters = []
-        if self.oauth:
-            consumer = oauth.Consumer(
-                key=self.oauth['consumer_key'],
-                secret=self.oauth['consumer_secret']
-            )
-            token = oauth.Token(
-                key=self.oauth['token'],
-                secret=self.oauth['token_secret']
-            )
-            oauth_filter = OAuthFilter('*', consumer, token)
-            filters.append(oauth_filter)
-        elif basic_auth:
-            auth_parts = basic_auth.split(':', 1)
-            filters.append(BasicAuth(auth_parts[0], auth_parts[1]))
-        elif self.basic_auth:
-            filters.append(BasicAuth(self.basic_auth['username'], self.basic_auth['password']))
-        return Resource(api_url, filters=filters, use_proxy=self.use_proxy)
+        self.ssl_ctx = ssl.create_default_context()
+        if insecure:
+            self.ssl_ctx.check_hostname = False
+            self.ssl_ctx.verify_mode = ssl.CERT_NONE
 
     def _build_url(self, path, query):
         path = util.pretty_path(
@@ -114,7 +78,9 @@ class RESTClient:
         return url, query
 
     def parse_url(self, url):
-        '''Parses a URL into its components. Allows as little information as possible (e.g. just a port, just a path), defaulting to http://localhost:80/.'''
+        """
+        Parses a URL into its components. Allows as little information as possible (e.g. just a port, just a path), defaulting to http://localhost:80/.
+        """
         # urlparse just doesn't do it the "right" way...
         # check for protocol and strip it off if found
         parts = {
@@ -146,7 +112,7 @@ class RESTClient:
             hostname = 'localhost'
         parts['hostname'] = hostname.lower()
         # let urlparse do the rest of the work on the path w/ a fake domain
-        parsed = urlparse.urlparse('http://localhost/' + url)
+        parsed = urllib.parse.urlparse('http://localhost/' + url)
         parts['path'] = parsed.path
         parts['params'] = parsed.params
         parts['query'] = parsed.query
@@ -154,7 +120,9 @@ class RESTClient:
         return parts
 
     def set_url(self, url):
-        '''Sets the base URL for requests. Assumes http://localhost by default.'''
+        """
+        Sets the base URL for requests. Assumes http://localhost by default.
+        """
         if url == '':
             raise Exception('Invalid API URL: %s.' % url)
         url = self.parse_url(url)
@@ -169,21 +137,6 @@ class RESTClient:
             else:
                 self.set_port(80)
 
-    def load_oauth(self, creds):
-        '''Sets OAuth keys to be used for each request. Can be set to None to stop using OAuth.'''
-        keys = [
-            'consumer_key', 'consumer_secret',
-            'token', 'token_secret'
-        ]
-        if creds is None:
-            self.oauth = None
-        else:
-            for item in keys:
-                if not creds[item]:
-                    raise Exception("Missing value for OAuth key '%s'." %
-                                    (item))
-            self.oauth = creds
-
     def load_basic_auth(self, username=None, password=None):
         if username is not None and password is not None:
             self.basic_auth = {'username': username, 'password': password}
@@ -191,7 +144,9 @@ class RESTClient:
             self.basic_auth = None
 
     def set_port(self, port):
-        '''Set the port that will be used for requests.'''
+        """
+        Set the port that will be used for requests.
+        """
         port = int(port)
         if port >= 0 and port <= 65535:
             self.url['port'] = port
@@ -199,130 +154,157 @@ class RESTClient:
             raise Exception('Invalid API service port: %s.' % port)
 
     def get(self, path, params=None, **opts):
-        '''Perform a GET request with the provided query string parameters. If the base URL and/or path contain query string parameters they will all be merged.'''
+        """
+        Perform a GET request with the provided query string parameters. If the
+        base URL and/or path contain query string parameters they will all be
+        merged.
+        """
         return self.request('GET', path, params, **opts)
 
     def post(self, path, params=None, **opts):
-        '''Perform a POST request with the supplied parameters as the payload. Defaults to JSON encoding.'''
+        """
+        Perform a POST request with the supplied parameters as the payload.
+        Defaults to JSON encoding.
+        """
         return self.request('POST', path, params, **opts)
 
     def patch(self, path, params=None, **opts):
-        '''Perform a PATCH request with the supplied parameters as the payload. Defaults to JSON encoding.'''
+        """
+        Perform a PATCH request with the supplied parameters as the payload.
+        Defaults to JSON encoding.
+        """
         return self.request('PATCH', path, params, **opts)
 
     def put(self, path, params=None, **opts):
-        '''Perform a PUT request with the supplied parameters as the payload. Defaults to JSON encoding.'''
+        """
+        Perform a PUT request with the supplied parameters as the payload.
+        Defaults to JSON encoding.
+        """
         return self.request('PUT', path, params, **opts)
 
     def options(self, path, params=None, **opts):
-        '''Perform a OPTIONS request with the supplied parameters as the payload. Defaults to JSON encoding.'''
+        """
+        Perform a OPTIONS request with the supplied parameters as the payload.
+        Defaults to JSON encoding.
+        """
         return self.request('OPTIONS', path, params, **opts)
 
     def delete(self, path, params=None, **opts):
-        '''Perform a DELETE request with the supplied parameters as the payload. Defaults to JSON encoding.'''
+        """
+        Perform a DELETE request with the supplied parameters as the payload.
+        Defaults to JSON encoding.
+        """
         return self.request('DELETE', path, params, **opts)
 
-    def request(self, method, path, params=None, query=None, headers=None,
-                verbose=False, full=False, basic_auth=None, pre_formatted=None):
-        # TODO: handle sending params as the body/payload for GET requests (e.g. ElasticSearch APIs use this)
+    def request(
+            self, method, path, params=None, query=None, headers=None,
+            verbose=False, full=False, basic_auth=None, pre_formatted_body=False,
+        ):
         # normalize the API parameters
         if method is None or method == '':
             method = 'get'
-        method = method.lower()
+        method = method.upper()
         if path == '' or path is None:
             path = '/'
         if params is None:
             params = {}
-        if type(query) == list:
+        if isinstance(query, list):
             query = '&'.join(query)
-        elif type(query) == dict:
+        elif isinstance(query, dict):
             query = self.build_query(query)
-        if method == 'get' and params:
+        # TODO: allow params to be in the request body (e.g. like ElasticSearch prefers)
+        if method == 'GET' and params:
             query = self.merge_query(self.build_query(params), query)
-        # merge in base URL params
         url, query = self._build_url(path, query)
         if query:
             url = '?'.join([url, query])
-        resource = self._prep_request(url, basic_auth)
-        # prep the rest of the request args
-        headers = headers if isinstance(headers, dict) else {}
-        # set the header unless we have a content-type already specified
-        if not self.get_header(headers, 'Content-Type') and method != 'get':
-            headers['Content-Type'] = 'application/json'
-        headers['Accept'] = 'application/json'
+
         request_args = {
-            'headers': []
+            'headers': {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json',
+            }
         }
-        for hdr_name in headers:
-            hdr_value = headers[hdr_name]
-            request_args['headers'].append((hdr_name, hdr_value))
+
+        # request headers (misc, cookies, auth, etc)
+        if headers:
+            request_args['headers'].update(headers)
+        cookies = []
         for name in self.cookies:
-            request_args['headers'].append(('Cookie', '='.join([name, self.cookies[name]])))
-        if method == 'get':
-            payload = ''
+            cookie.append('='.join([name, self.cookies[name]]))
+        if cookies:
+            request_args['headers']['Cookie'] = '&'.join(cookies)
+        if basic_auth or self.basic_auth:
+            if not basic_auth:
+                basic_auth = ':'.join([
+                    self.basic_auth['username'],
+                    self.basic_auth['password'],
+                ])
+            auth_header ='Basic ' + base64.b64encode(basic_auth)
+            request_args['headers']['Authorization'] = auth_header
+
+        # request body
+        if method == 'GET':
+            body = ''
         else:
-            if pre_formatted:
-                payload = params
+            if pre_formatted_body:
+                body = params
             else:
-                if self.get_header(headers, 'Content-Type', 'application/json'):
-                    payload = self.encode(params)
-                elif self.get_header(headers, 'Content-Type', 'application/x-www-form-urlencoded'):
-                    payload = urllib.urlencode(params)
+                if self.get_header(request_args['headers'], 'Content-Type', 'application/json'):
+                    body = json.dumps(params).encode('utf-8')
+                elif self.get_header(request_args['headers'], 'Content-Type', 'application/x-www-form-urlencoded'):
+                    body = urllib.parse.urlencode(params)
                 else:
                     # assume its already been encoded
-                    payload = params
-            request_args['payload'] = payload
+                    body = params
+            request_args['data'] = body
+
         # fire away!
         if verbose:
-            sys.stderr.write(
-                '# Request: %s %s\n' % (method.upper(), url)
+            dbg.log(
+                'Request:',
+                data=' %s %s' % (method.upper(), url),
+                data_inline=True
             )
-            if payload:
-                sys.stderr.write('# Request Body: %s\n' % payload)
-            elif 'params_dict' in request_args:
-                sys.stderr.write('# Request Query: %s\n' % request_args['params_dict'])
-            sys.stderr.write('# Request Headers: %s\n' % str(headers))
-            if self.oauth:
-                sys.stderr.write('# Oauth consumer key: %s\n' % self.oauth['consumer_key'])
+            if body:
+                dbg.log('Request Body: ', data=body, data_inline=True)
+            if request_args['headers']:
+                dbg.log('Request Headers:', data=request_args['headers'])
             if self.cookies:
-                sys.stderr.write('# Request Cookies: %s\n' % str(self.cookies))
+                dbg.log('Request Cookies:', data=self.cookies)
+        request = urllib.request.Request(url, **request_args)
         try:
-            response = resource.request(method.upper(), **request_args)
-            response_data = response.body_string()
-        except RequestFailed as e:
-            response = e.response
-            response_data = e.message
-        except ResourceNotFound as e:
-            response = e.response
-            response_data = e.message
-        except Unauthorized as e:
-            response = e.response
-            response_data = e.message
+            response = urllib.request.urlopen(request, context=self.ssl_ctx)
+        except urllib.request.HTTPError as error_resp:
+            response = error_resp
+        response_data = response.read().decode('utf-8')
+
         # see if we get a cookie back; note that we ignore the path
-        for hdr_name, hdr_value in response.headerslist:
+        for hdr_name, hdr_value in response.headers.items():
             if hdr_name.lower() == 'set-cookie':
-                cookies = Cookie.BaseCookie(hdr_value)
+                cookies = http.cookies.BaseCookie(hdr_value)
                 for name in cookies:
                     self.cookies[name] = cookies[name].value
         if verbose:
-            sys.stderr.write(
-                '# Response Status: %s\n# Response Headers: %s\n' % (
-                    response.status, self.encode(response.headers)
-                )
+            dbg.log('Response Status: ', data=response.status, data_inline=True)
+            dbg.log('Response Headers:', data={
+                    name: val
+                    for name, val in response.headers.items()
+                }
             )
         content_type = response.headers.get('Content-Type')
         if not content_type or not content_type.startswith("application/json"):
             decoded = response_data
         else:
             try:
-                decoded = self.decode(response_data)
+                decoded = json.loads(response_data)
             except:
                 raise Exception('Failed to decode API response\n' + response_data)
-        response = Response(meta=response, decoded=decoded, raw=response_data)
-        if response.meta.status_int < 200 or response.meta.status_int >= 400:
-            raise APIException(
+        response = Response(obj=response, decoded=decoded, data=response_data)
+        if response.obj.status < 200 or response.obj.status >= 400:
+            raise ApiException(
                 '"%s %s" failed (%s)' % (
-                    method.upper(), path, response.meta.status
+                    method, path, response.obj.status
                 ),
                 response,
             )
@@ -332,8 +314,11 @@ class RESTClient:
 
     @classmethod
     def build_query_obj(cls, query, keep_blanks=True):
-        '''Translates a query string into an object. If multiple keys are used the values will be contained in an array.'''
-        obj = urlparse.parse_qs(query, keep_blank_values=keep_blanks)
+        """
+        Translates a query string into an object. If multiple keys are used the
+        values will be contained in an array.
+        """
+        obj = urllib.parse.parse_qs(query, keep_blank_values=keep_blanks)
         # all objects are lists by default, but it's probably more conventional to flatten single-item arrays
         new_obj = {}
         for key in obj:
@@ -345,26 +330,29 @@ class RESTClient:
 
     @classmethod
     def build_query(cls, params, topkey=''):
-        '''Mimics the behaviour of http_build_query PHP function (e.g. arrays will be encoded as foo[0]=bar, booleans as 0/1).'''
+        """
+        Mimics the behaviour of http_build_query PHP function (e.g. arrays will
+        be encoded as foo[0]=bar, booleans as 0/1).
+        """
         if len(params) == 0:
             return ""
         result = ""
         # is a dictionary?
-        if type(params) is dict:
+        if isinstance(params, dict):
             for key in params.keys():
                 newkey = urllib.quote(key)
                 if topkey != '':
                     newkey = topkey + urllib.quote('[' + key + ']')
-                if type(params[key]) is dict:
+                if isinstance(params[key], dict):
                     result += cls.build_query(params[key], newkey)
-                elif type(params[key]) is list:
+                elif isinstance(params[key], list):
                     i = 0
                     for val in params[key]:
                         result += newkey + urllib.quote('[' + str(i) + ']') \
                             + "=" + urllib.quote(str(val)) + "&"
                         i = i + 1
                 # boolean should have special treatment as well
-                elif type(params[key]) is bool:
+                elif isinstance(params[key], bool):
                     result += newkey + "=" + urllib.quote(str(int(params[key]))) + "&"
                 # assume string (integers and floats work well)
                 else:
@@ -375,8 +363,10 @@ class RESTClient:
         return result
 
     @classmethod
-    def merge_query(cls, query1, query2=None):
-        '''Merge two query strings together. Discards any leading '?' characters.'''
+    def merge_query(cls, query1: str, query2: str = None):
+        """
+        Merge two query strings together. Discards any leading '?' characters.
+        """
         if query1.startswith('?'):
             query1 = query1[1:]
         if not query2:
@@ -386,16 +376,21 @@ class RESTClient:
         return '&'.join([query1, query2])
 
     @classmethod
-    def merge_url_query(cls, url, query):
-        '''Update a URL to add or append a query string.'''
+    def merge_url_query(cls, url: str, query: str):
+        """
+        Update a URL to add or append a query string.
+        """
         if url.find('?') >= 0:
             url, existing_query = url.split('?', 1)
             query = cls.merge_query(existing_query, query)
         return '?'.join((url, query)).rstrip('?')
 
     @classmethod
-    def get_header(cls, headers, header, value=None):
-        '''Read a header from the given list (ignoring case) and return the value. Returns None if not found, or optionally the value given.'''
+    def get_header(cls, headers: dict, header: str, value=None):
+        """
+        Read a header from the given list (ignoring case) and return the value.
+        Returns None if not found, or optionally the value given.
+        """
         for key in headers:
             if key.lower() == header.lower():
                 if value is None:

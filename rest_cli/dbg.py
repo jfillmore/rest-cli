@@ -1,16 +1,18 @@
-#!/usr/bin/env python
+"""
+Uses python introspection to provide PHP-like "var_dump" functionality for
+debugging objects.
+"""
 
-"""Uses python introspection to provide PHP-like "var_dump" functionality for debugging objects."""
-
+import json
 import sys
 import time
+import traceback
 import types
 import inspect
 
 
 dark_colors = {
     'str': '0;37',
-    'unicode': '0;37',
     'bool': '1;36',
     'int': '0;32',
     'float': '1;32',
@@ -30,7 +32,6 @@ dark_colors = {
 
 light_colors = {
     'str': '1;30',
-    'unicode': '1;30',
     'bool': '0;36',
     'int': '1;31',
     'float': '1;31',
@@ -53,14 +54,14 @@ def get_obj_info(obj, include_private=False):
     obj_info = {
         'type': type(obj).__name__,
         'callable': callable(obj),
-        'value': unicode(obj),
+        'value': str(obj),
         'repr': repr(obj),
-        'description': unicode(getattr(obj, '__doc__', '')).strip()
+        'description': str(getattr(obj, '__doc__', '')).strip()
     }
     # take a look at what it contains and build up description of what we've got
     if obj_info['type'] == 'function':
         obj_info['arg_spec'] = inspect.getargspec(obj)
-    elif not obj_info['type'] in ('str', 'int', 'float', 'bool', 'NoneType', 'unicode', 'ArgSpec'):
+    elif not obj_info['type'] in ('str', 'int', 'float', 'bool', 'NoneType', 'ArgSpec'):
         for key in dir(obj):
             if key.startswith('__') and not include_private:
                 continue
@@ -69,17 +70,17 @@ def get_obj_info(obj, include_private=False):
                 if not 'methods' in obj_info:
                     obj_info['methods'] = {}
                 obj_info['methods'][key] = {
-                    'description': unicode(item.__doc__)[0:64].strip(),
+                    'description': str(item.__doc__)[0:64].strip(),
                     'arg_spec': inspect.getargspec(item)
                 }
             elif inspect.ismodule(item):
                 if not 'modules' in obj_info:
                     obj_info['modules'] = {}
-                obj_info['modules'][key] = unicode(item.__doc__)[0:64].strip()
+                obj_info['modules'][key] = str(item.__doc__)[0:64].strip()
             elif inspect.isclass(item):
                 if not 'classes' in obj_info:
                     obj_info['classes'] = {}
-                obj_info['classes'][key] = unicode(item.__doc__)[0:64].strip()
+                obj_info['classes'][key] = str(item.__doc__)[0:64].strip()
             else:
                 if not 'properties' in obj_info:
                     obj_info['properties'] = {}
@@ -87,30 +88,65 @@ def get_obj_info(obj, include_private=False):
     return obj_info
 
 
-def print_tb():
-    import traceback
-    tb = traceback.extract_stack()
-    #tb.pop() # no need to show the last item, which is the line of code executing traceback.extract_stack()
-    print '\n'.join([
-        "\tTraceback (most recent call on bottom):",
-        '\n'.join(['\t\t%s:%i, method "%s"\n\t\t\tLine: %s' % t for t in tb])
-    ])
+def print_tb(exception=None):
+    if exception:
+        frames = []
+        for i, frame in enumerate(traceback.extract_tb(tb)):
+            where = frame.name + ' - ' + frame.filename[len(cwd) + 1:]
+            frames.append({
+                'line': frame.line,
+                'where': f'{where}:{frame.lineno}',
+                'depth': i,
+            })
+    else:
+        tb = traceback.extract_stack()
+        print('\n'.join([
+            "\tTraceback (most recent call on bottom):",
+            '\n'.join(['\t\t%s:%i, method "%s"\n\t\t\tLine: %s' % t for t in tb])
+        ]))
 
 
-def obj2str(obj, depth=0, color=True, indent_char=' ', indent_size=4, inline=True, short_form=False, invert_color=False):
-    """Returns a formatted string, optionally with color coding"""
+def log(
+        msg, color='1;34', data=None, data_color='1;33', data_inline=False,
+        symbol='#'
+    ):
+    color_parts = color.split(';', 1)
+    if len(color_parts) > 1:
+        is_light = bool(color_parts[0])
+        hue = color_parts[1]
+    else:
+        is_light = False
+        hue = color_parts[0]
+    color_alt = str(int(not is_light)) + ';' + hue
+    log_str = f'\033[{color_alt}m{symbol}\033[0m ' if symbol else ''
+    log_str += f'\033[{color}m{msg}\033[0m' + ('' if data_inline else '\n')
+    sys.stderr.write(log_str)
+    if data is not None:
+        if isinstance(data, bytes):
+            data = data.decode('utf-8')
+        data_str = data if isinstance(data, str) else json.dumps(data, indent=4) 
+        sys.stderr.write(f'\033[{data_color}m%s\033[0m\n' % data_str)
+
+
+def shell_color(obj, obj_color=None):
+    if obj_color:
+        return f'\033[{obj_color}m{str(obj)}\033[0;0m'
+    return str(obj)
+
+
+def obj2str(
+        obj, depth=0, color=True, indent_char=' ', indent_size=4, inline=True,
+        short_form=False, invert_color=False
+    ):
+    """
+    Returns a formatted string, optionally with color coding
+    """
 
     palette = light_colors if invert_color else dark_colors
 
-    def shell_color(obj, obj_color):
-        if color:
-            return '\033[%sm%s\033[0;0m' % (obj_color, unicode(obj))
-        else:
-            return unicode(obj)
-
     def rdump(obj, depth=0, indent_size=4, inline=False, short_form=False):
         if short_form:
-            return unicode(obj)[0:80 - (depth * indent_size)]
+            return str(obj)[0:80 - (depth * indent_size)]
         obj_info = get_obj_info(obj)
         # indent ourselves
         dump = depth * (indent_size * indent_char)
@@ -170,9 +206,9 @@ def obj2str(obj, depth=0, color=True, indent_char=' ', indent_size=4, inline=Tru
                 dump += shell_color(' ()', palette['object'])
             else:
                 dump += shell_color('(', palette['bullet'])
-                dump += ', '.join([unicode(item)[0:32] for item in obj if item != ()])
+                dump += ', '.join([str(item)[0:32] for item in obj if item != ()])
                 dump += shell_color(')', palette['bullet'])
-        elif obj_info['type'] == 'str' or obj_info['type'] == 'unicode':
+        elif obj_info['type'] == 'str':
             dump += shell_color(obj, palette[obj_info['type']])
         elif obj_info['type'] == 'bool':
             dump += shell_color(obj, palette[obj_info['type']])
@@ -209,8 +245,13 @@ def obj2str(obj, depth=0, color=True, indent_char=' ', indent_size=4, inline=Tru
     return rdump(obj, depth, indent_size, inline, short_form)
 
 
-def pretty_print(obj, depth=0, color=True, indent_char=' ', indent_size=4, stream=sys.stdout, invert_color=False):
-    """Pretty-prints the contents of the list, tupple, sequence, etc."""
+def pretty_print(
+        obj, depth=0, color=True, indent_char=' ', indent_size=4,
+        stream=sys.stdout, invert_color=False
+    ):
+    """
+    Pretty-prints the contents of the list, tupple, sequence, etc.
+    """
     output = obj2str(obj, depth, color, indent_char, indent_size, inline=True, invert_color=invert_color)
     try:
         output = output.encode(sys.stdout.encoding if sys.stdout.encoding else 'utf-8', 'ignore')
@@ -224,8 +265,3 @@ def pretty_print(obj, depth=0, color=True, indent_char=' ', indent_size=4, strea
         pass
 
 pp = pretty_print
-
-
-if __name__ == '__main__':
-    sys.stdout.write('Pretty print:\n')
-    pp(pp, depth=1)
