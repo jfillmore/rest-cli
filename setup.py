@@ -12,7 +12,6 @@ setup(
     include_package_data=True,
     zip_safe=False,
     install_requires=[
-        'restkit==4.2.2',
         'pyquery==1.4.1'
     ],
     python_requires='>=3.6',
